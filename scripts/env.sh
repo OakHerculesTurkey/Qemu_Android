@@ -100,3 +100,15 @@ git_fetch() {
   log "Cloning $url ($ref)"
   git -c advice.detachedHead=false clone --depth 1 -b "$ref" "$url" "$dir"
 }
+
+# apply_patches <src dir> <patch dir>: applies *.patch once (stamp file).
+apply_patches() {
+  local src="$1" dir="$2" p
+  [ -f "$src/.android-patched" ] && return 0
+  for p in "$dir"/*.patch; do
+    [ -e "$p" ] || continue
+    log "Applying $(basename "$p") to $(basename "$src")"
+    git -C "$src" apply --whitespace=nowarn "$p"
+  done
+  touch "$src/.android-patched"
+}

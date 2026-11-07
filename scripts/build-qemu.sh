@@ -6,14 +6,7 @@ QEMU_SRC="$SRC_DIR/qemu"
 QEMU_BUILD="$BUILD_DIR/qemu"
 
 # Apply Android patches once (tracked with a stamp inside the source tree).
-if [ ! -f "$QEMU_SRC/.android-patched" ]; then
-  for p in "$REPO_ROOT"/patches/qemu/*.patch; do
-    [ -e "$p" ] || continue
-    log "Applying $(basename "$p")"
-    git -C "$QEMU_SRC" apply --whitespace=nowarn "$p"
-  done
-  touch "$QEMU_SRC/.android-patched"
-fi
+apply_patches "$QEMU_SRC" "$REPO_ROOT/patches/qemu"
 
 export PKG_CONFIG=pkg-config
 

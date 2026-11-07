@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monitor with a small chip: "a computer inside the phone" -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FF6E9BFF"
+        android:pathData="M30,34h48a4,4 0,0 1,4 4v28a4,4 0,0 1,-4 4H30a4,4 0,0 1,-4 -4V38a4,4 0,0 1,4 -4z" />
+    <path android:fillColor="#FF0F1830"
+        android:pathData="M31,39h46v26H31z" />
+    <path android:fillColor="#FF6E9BFF"
+        android:pathData="M48,70h12v5h7v4H41v-4h7z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M47,45h14v14H47z" />
+    <path android:fillColor="#FF0F1830"
+        android:pathData="M50,48h8v8h-8z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M44,47h3v2h-3zM44,51h3v2h-3zM44,55h3v2h-3zM61,47h3v2h-3zM61,51h3v2h-3zM61,55h3v2h-3z" />
+</vector>

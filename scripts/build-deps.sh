@@ -85,6 +85,7 @@ fi
 # ---- libslirp (user-mode networking, "-netdev user") ----------------------
 if [ ! -f "$(stamp slirp)" ]; then
   log "Building libslirp"
+  apply_patches "$SRC_DIR/libslirp" "$REPO_ROOT/patches/libslirp"
   rm -rf "$BUILD_DIR/slirp"
   meson setup "$BUILD_DIR/slirp" "$SRC_DIR/libslirp" --cross-file "$CROSS" \
     --prefix="$DEPS_PREFIX" --libdir=lib --buildtype=release \

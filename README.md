@@ -18,6 +18,57 @@ telefona/tablete kopyalanıp `adb shell` ya da Termux içinden çalıştırılı
 Ortaya çıkan ikili dosyalar sadece Android sistem kütüphanelerine (`libc.so`,
 `libm.so`) bağlıdır; ayrıca kütüphane kopyalamaya gerek yoktur.
 
+## Android uygulaması (APK)
+
+`android-app/` — QEMU'yu dokunmatik arayüzle kullanmak için uygulama
+(Android 9+, hedef Android 17 / API 37, arm64-v8a; Snapdragon 8 Elite gibi
+cihazlar için). PC gerekmez: APK'yı telefona indirip kurmanız yeterli.
+
+* **Sanal makine listesi** — başlat / durdur / düzenle / kopyala / sil, çalışma durumu.
+* **Şablonlar** — Linux ARM64 (UEFI, ekranlı), Linux ARM64 (seri konsol),
+  x86_64 Linux (BIOS), x86_64 Windows (IDE + e1000), x86_64 UEFI, boş.
+* **Ayarlar** — mimari, makine, CPU, çekirdek, bellek, firmware (UEFI/BIOS/yok),
+  disk (+ arayüz: VirtIO/NVMe/IDE/USB), ISO, önyükleme sırası, doğrudan kernel/initrd,
+  ekran kartı, ağ (NAT + port yönlendirme, NIC modeli), TCG ayarları, ek QEMU
+  parametreleri ve **oluşan komutun önizlemesi**.
+* **Dosyalar** — ISO/disk seçme (uygulamaya kopyalanır), uygulama içinden yeni qcow2
+  disk oluşturma (`qemu-img`), isteğe bağlı "Tüm dosyalara erişim" ile `/sdcard/...`
+  yollarını kopyalamadan kullanma.
+* **Ekran** — dahili VNC görüntüleyici (QEMU'ya uygulamaya özel unix soketiyle bağlanır,
+  dışarıya port açmaz). İki fare modu: *Dokunma* (dokunduğun yere tıklar, uzun bas = sağ
+  tık, sürükle, iki parmak = kaydırma) ve *Touchpad* (göreli imleç). Ekran klavyesi,
+  donanım klavye/fare, Ctrl/Alt/Shift/Win (yapışkan), Esc, Tab, oklar, F1–F12,
+  Ctrl+Alt+Del.
+* **Güç** — duraklat / devam / reset / ACPI kapat / zorla kapat (QMP).
+* **Seri konsol**, **QEMU monitörü** (HMP komutları: `info status`, `change cd0 ...`,
+  `savevm` …) ve **Log** ekranı; log'u tek tuşla paylaşma (hata ayıklamak için).
+* **Sistem bilgisi / tanılama** — cihaz, SoC, sayfa boyutu, `/dev/kvm`, QEMU sürümü.
+* VM'ler bir ön plan servisinde çalışır; uygulamadan çıkınca kapanmaz
+  (bildirimden "Hepsini kapat").
+
+APK derleme:
+
+```sh
+./build.sh                 # QEMU (arm64-v8a)
+./scripts/build-apk.sh     # Android SDK'yı kurar, dist/qemu-android-<sürüm>.apk üretir
+```
+
+Uygulamanın QEMU'yu süren saf Java çekirdeği (komut oluşturucu, VNC/RFB istemcisi,
+QMP istemcisi) gerçek QEMU Android derlemesine karşı test edilir:
+`./scripts/test-app-core.sh` (önce `ANDROID_ABI=x86_64 ./build.sh` ve
+`./scripts/smoke-test.sh`).
+
+### Sorun giderme
+
+* **QEMU kod 137 ile kapanıyor** — Android süreci öldürdü (bellek ya da Android 12+
+  "phantom process killer"). Geliştirici seçenekleri → *Alt süreç kısıtlamalarını devre
+  dışı bırak*'ı açın veya VM belleğini azaltın.
+* **Siyah ekran / TCG hatası** — Ayarlar → Ek parametreler'e `-accel tcg,split-wx=on`
+  yazmayı deneyin (bazı cihazlar yazılabilir+çalıştırılabilir belleğe izin vermez).
+* **Yavaşlık** — ARM64 misafir kullanın (x86 emülasyonu çok daha yavaştır);
+  CPU `max,pauth-impdef=on` (varsayılan) ve "Çok iş parçacıklı (MTTCG)" seçin.
+* Hata olursa: VM → ⋮ → Log → **Paylaş** ile log'u gönderin.
+
 ## Hızlı başlangıç (derleme)
 
 Debian/Ubuntu üzerinde:
@@ -110,13 +161,16 @@ TCG ile çalıştığı için masaüstüne göre belirgin şekilde yavaştır.
   daha düşük API'de O_DIRECT hizalama sorgusu atlanır (QEMU zaten başka yöntemlere düşer).
 * **`ivshmem-server` / `ivshmem-test`** — `shm_open` gerektirdiği için Android'de derlenmez.
 
+`patches/libslirp/0001-android-resolv-conf.patch`:
+
+* Android'de `/etc/resolv.conf` yoktur; libslirp misafirin DNS isteklerini
+  `SLIRP_RESOLV_CONF` ortam değişkenindeki dosyaya göre yönlendirir. Uygulama bu
+  dosyayı her başlatmada aktif ağın DNS sunucularıyla yazar.
+
 ## Sınırlamalar / sonraki adımlar
 
-* Bu bir **komut satırı** portudur. Ekran için VNC kullanılır; SDL/GTK ve ses
-  (OpenSL/AAudio) arka uçları yoktur.
-* Bir **APK** (dokunmatik arayüz, `SurfaceView` ekran) bir sonraki adım olabilir:
-  bu ikililer `jniLibs/<abi>/libqemu-system-aarch64.so` olarak paketlenip
-  uygulamadan `ProcessBuilder` ile çalıştırılabilir (Android 10+'da yazılabilir
-  dizinlerden çalıştırma kısıtı nedeniyle önerilen yöntem budur).
-* Çoğu telefonda `/dev/kvm` yoktur; hızlandırma TCG ile olur.
+* Ses (AAudio/OpenSL) ve 3D hızlandırma (virgl) yok; ekran VNC çerçeve arabelleğidir.
+* Çoğu telefonda uygulamalar `/dev/kvm`'ye erişemez; hızlandırma TCG (JIT) ile olur.
 * `linux-user` (qemu-aarch64 gibi kullanıcı modu emülatörler) derlenmedi.
+* Uygulama henüz gerçek cihazda test edilmedi; derleme ortamında çekirdek mantık
+  (VNC, QMP, seri konsol) gerçek QEMU Android derlemesine karşı test edildi.

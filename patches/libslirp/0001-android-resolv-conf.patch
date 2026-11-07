@@ -1,0 +1,23 @@
+diff --git a/src/slirp.c b/src/slirp.c
+index 62a018a..60d673f 100644
+--- a/src/slirp.c
++++ b/src/slirp.c
+@@ -369,6 +369,18 @@ int get_dns6_addr(struct in6_addr *pdns6_addr, uint32_t *scope_id)
+ 
+ #if defined(__HAIKU__)
+ #define RESOLV_CONF_PATH "/boot/system/settings/network/resolv.conf"
++#elif defined(__ANDROID__)
++/*
++ * Android has no /etc/resolv.conf (DNS is handled by netd). The embedding
++ * application writes the current network's DNS servers to a file and points
++ * SLIRP_RESOLV_CONF at it.
++ */
++static const char *android_resolv_conf(void)
++{
++    const char *p = getenv("SLIRP_RESOLV_CONF");
++    return (p && *p) ? p : "/etc/resolv.conf";
++}
++#define RESOLV_CONF_PATH android_resolv_conf()
+ #else
+ #define RESOLV_CONF_PATH "/etc/resolv.conf"
+ #endif
