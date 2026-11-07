@@ -1,0 +1,41 @@
+name: Build QEMU for Android
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    env:
+      ANDROID_ABI: ${{ matrix.abi }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host tools
+        run: |
+          ./scripts/setup-host.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache NDK and sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            work/dl
+            work/src
+            work/android-ndk-*
+          key: sources-${{ hashFiles('scripts/env.sh', 'scripts/fetch.sh', 'patches/**') }}
+
+      - name: Build
+        run: ./build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-android-${{ matrix.abi }}
+          path: dist/*.tar.gz

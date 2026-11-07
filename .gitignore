@@ -1,0 +1,4 @@
+# Downloads, sources, build trees and install prefixes
+/work/
+# Release tarballs produced by scripts/package.sh
+/dist/

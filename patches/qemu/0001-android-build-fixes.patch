@@ -1,0 +1,100 @@
+diff --git a/block/file-posix.c b/block/file-posix.c
+index 90c086f1f86d..219444da1474 100644
+--- a/block/file-posix.c
++++ b/block/file-posix.c
+@@ -427,7 +427,9 @@ static void raw_probe_alignment(BlockDriverState *bs, int fd, Error **errp)
+     bs->bl.request_alignment = 0;
+     s->buf_align = 0;
+ 
+-#if defined(__linux__) && defined(STATX_DIOALIGN)
++/* bionic only declares statx() from API level 30 on */
++#if defined(__linux__) && defined(STATX_DIOALIGN) && \
++    (!defined(__ANDROID__) || __ANDROID_API__ >= 30)
+     struct statx stx;
+ 
+     /*
+@@ -440,7 +442,7 @@ static void raw_probe_alignment(BlockDriverState *bs, int fd, Error **errp)
+         bs->bl.request_alignment = stx.stx_dio_offset_align;
+         s->buf_align = stx.stx_dio_mem_align;
+     }
+-#endif /* defined(__linux__) && defined(STATX_DIOALIGN) */
++#endif /* __linux__ && STATX_DIOALIGN && (!__ANDROID__ || API >= 30) */
+ 
+ #ifdef __linux__
+     if (!bs->bl.request_alignment) {
+diff --git a/meson.build b/meson.build
+index 40e3f4ec44c8..c0dd3e678fad 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1369,7 +1369,9 @@ endif
+ spice_headers = spice.partial_dependency(compile_args: true, includes: true)
+ 
+ rt = not_found
+-if host_os != 'windows'
++# Android's bionic has no shm_open() and no librt; qemu_shm_alloc() falls
++# back to memfd there (see util/oslib-posix.c).
++if host_os != 'windows' and cc.get_define('__ANDROID__') == ''
+   have_shm_open = cc.has_function('shm_open')
+   if not have_shm_open
+     rt = cc.find_library('rt', required: true)
+@@ -4569,7 +4571,10 @@ if have_tools
+ 
+   if have_ivshmem
+     subdir('contrib/ivshmem-client')
+-    subdir('contrib/ivshmem-server')
++    # ivshmem-server needs POSIX shm_open(), which Android lacks
++    if cc.get_define('__ANDROID__') == ''
++      subdir('contrib/ivshmem-server')
++    endif
+   endif
+ 
+   if have_qemu_vnc
+diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
+index 78b301064963..4dd0183a199c 100644
+--- a/tests/qtest/meson.build
++++ b/tests/qtest/meson.build
+@@ -37,7 +37,8 @@ endif
+ 
+ qtests_pci = \
+   (config_all_devices.has_key('CONFIG_VGA') ? ['display-vga-test'] : []) +                  \
+-  (config_all_devices.has_key('CONFIG_IVSHMEM_DEVICE') ? ['ivshmem-test'] : [])
++  (config_all_devices.has_key('CONFIG_IVSHMEM_DEVICE') and \
++   cc.get_define('__ANDROID__') == '' ? ['ivshmem-test'] : [])
+ 
+ qtests_cxl = \
+   (config_all_devices.has_key('CONFIG_CXL') ? ['cxl-test'] : [])
+diff --git a/util/oslib-posix.c b/util/oslib-posix.c
+index dc001da66dd4..29b8489a6812 100644
+--- a/util/oslib-posix.c
++++ b/util/oslib-posix.c
+@@ -27,6 +27,7 @@
+  */
+ 
+ #include "qemu/osdep.h"
++#include "qemu/memfd.h"
+ #include <termios.h>
+ 
+ #include <glib/gprintf.h>
+@@ -982,6 +983,17 @@ void qemu_close_all_open_fd(const int *skip, unsigned int nskip)
+     }
+ }
+ 
++#ifdef __ANDROID__
++/*
++ * Android (bionic) does not provide POSIX shared memory (shm_open). An
++ * anonymous memfd gives the same semantics: an fd backed by shared memory
++ * that is released once the last reference is closed.
++ */
++int qemu_shm_alloc(size_t size, Error **errp)
++{
++    return qemu_memfd_create("qemu-shm", size, false, 0, 0, errp);
++}
++#else
+ int qemu_shm_alloc(size_t size, Error **errp)
+ {
+     g_autoptr(GString) shm_name = g_string_new(NULL);
+@@ -1033,3 +1045,4 @@ int qemu_shm_alloc(size_t size, Error **errp)
+ 
+     return fd;
+ }
++#endif /* __ANDROID__ */

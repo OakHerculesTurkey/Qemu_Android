@@ -1,0 +1,27 @@
+# Meson cross file template, filled in by scripts/env.sh (meson_cross_file)
+[binaries]
+c = '@CC@'
+cpp = '@CXX@'
+ar = '@AR@'
+strip = '@STRIP@'
+ranlib = '@RANLIB@'
+nm = '@NM@'
+objcopy = '@OBJCOPY@'
+pkg-config = 'pkg-config'
+
+[built-in options]
+c_args = ['-fPIC', '-I@PREFIX@/include']
+cpp_args = ['-fPIC', '-I@PREFIX@/include']
+c_link_args = ['-L@PREFIX@/lib']
+cpp_link_args = ['-L@PREFIX@/lib']
+
+[properties]
+needs_exe_wrapper = true
+pkg_config_libdir = '@PREFIX@/lib/pkgconfig'
+
+[host_machine]
+system = 'android'
+kernel = 'linux'
+cpu_family = '@CPU_FAMILY@'
+cpu = '@CPU@'
+endian = 'little'
