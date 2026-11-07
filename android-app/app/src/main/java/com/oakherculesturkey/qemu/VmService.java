@@ -293,7 +293,11 @@ public class VmService extends Service {
             }
             code = p.waitFor();
             write(id, logOut, "\n# QEMU çıktı, kod " + code + "\n");
-            if (code == 137 || code == 128 + 9) {
+            if (code > 128 && code < 160) {
+                write(id, logOut, "# Sinyal ile sonlandı: " + signalName(code - 128)
+                        + ". Yukarıda \"QEMU-ANDROID CRASH\" raporu varsa lütfen log'u paylaşın.\n");
+            }
+            if (code == 137) {
                 write(id, logOut, "# QEMU Android tarafından öldürüldü (SIGKILL). Olası nedenler: bellek "
                         + "yetersizliği veya Android'in alt süreç kısıtlaması (phantom process killer). "
                         + "Geliştirici seçenekleri → \"Alt süreç kısıtlamalarını devre dışı bırak\" "
@@ -316,6 +320,18 @@ public class VmService extends Service {
                 if (exit != 0) Ui.toast(this, r.config.name + ": QEMU hata ile kapandı (" + exit + "). Log'a bakın.");
             });
             changed();
+        }
+    }
+
+    private static String signalName(int sig) {
+        switch (sig) {
+            case 4: return "SIGILL (geçersiz komut)";
+            case 6: return "SIGABRT (QEMU kendini durdurdu)";
+            case 7: return "SIGBUS (bellek erişim hatası)";
+            case 9: return "SIGKILL (Android tarafından öldürüldü)";
+            case 11: return "SIGSEGV (bellek hatası)";
+            case 31: return "SIGSYS (engellenen sistem çağrısı)";
+            default: return "sinyal " + sig;
         }
     }
 

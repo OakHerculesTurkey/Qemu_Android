@@ -10,8 +10,8 @@ android {
         applicationId = "com.oakherculesturkey.qemu"
         minSdk = 28
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         ndk {
             // Snapdragon 8 Elite and every other modern phone: arm64 only.
             // x86_64 can be added for emulators / Chromebooks (see build-apk.sh).

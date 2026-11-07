@@ -58,6 +58,10 @@ QMP istemcisi) gerçek QEMU Android derlemesine karşı test edilir:
 `./scripts/test-app-core.sh` (önce `ANDROID_ABI=x86_64 ./build.sh` ve
 `./scripts/smoke-test.sh`).
 
+`./scripts/test-arm64-pac.sh` — **arm64** derlemesini, QEMU'nun kendi aarch64 kullanıcı
+modu emülatöründe `-cpu max` (PAC, BTI, …) ve gerçek Android bionic ile çalıştırır;
+diskli VM'ler açar. Telefon olmadan PAC/iş parçacığı hatalarını yakalar.
+
 ### Sorun giderme
 
 * **QEMU kod 137 ile kapanıyor** — Android süreci öldürdü (bellek ya da Android 12+
@@ -160,6 +164,16 @@ TCG ile çalıştığı için masaüstüne göre belirgin şekilde yavaştır.
 * **`statx` (API < 30)** — bionic `statx()`'i API 30'dan itibaren bildirir;
   daha düşük API'de O_DIRECT hizalama sorgusu atlanır (QEMU zaten başka yöntemlere düşer).
 * **`ivshmem-server` / `ivshmem-test`** — `shm_open` gerektirdiği için Android'de derlenmez.
+* **Coroutine'ler ve PAC (SIGILL düzeltmesi)** — bionic'te `makecontext/swapcontext` yok,
+  bu yüzden QEMU `sigaltstack` arka ucunu seçiyordu. Asıl sorun: Android 12+ her iş
+  parçacığına ayrı PAC anahtarı verir (`__pthread_start` → `prctl(PR_PAC_RESET_KEYS)`),
+  bionic'in `sigsetjmp`'ı dönüş adresini bu anahtarla imzalar; QEMU bir coroutine'i başka
+  bir iş parçacığında sürdürdüğünde `siglongjmp` içindeki `autiasp` başarısız olur ve
+  pointer authentication'lı CPU'larda (ör. Snapdragon 8 Elite) disk erişimi olan her VM
+  **SIGILL** (kod 132) ile çöker. Android'de `ucontext` arka ucu, imzalamayan küçük bir
+  assembly bağlam değiştirici (arm64 + x86_64) ile kullanılır.
+* **Çökme raporu** — `util/android-crash.c`: ölümcül sinyallerde sinyal, PC, komut,
+  modül+ofset, geri izleme ve HWCAP bilgisini stderr'e (uygulamanın log'una) yazar.
 
 `patches/libslirp/0001-android-resolv-conf.patch`:
 

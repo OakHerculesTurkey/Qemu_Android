@@ -170,11 +170,27 @@ public class CoreTest {
         a.tcgThread = "multi";
         testVnc("aarch64-uefi-vnc", a, bionic, bin, data, work);
 
-        // 2) x86_64, SeaBIOS + std VGA over VNC
-        VmConfig x = VmConfig.template(2);
+        // 2) x86_64, SeaBIOS + std VGA over VNC, with an IDE qcow2 disk so the
+        //    block layer (coroutines) is exercised
+        File xdir = new File(work, "x86_64-bios-vnc");
+        xdir.mkdirs();
+        File disk = new File(xdir, "disk.qcow2");
+        ProcessBuilder ipb = new ProcessBuilder(new File(bionic, "linker64").getAbsolutePath(),
+                new File(bin, "libqemu-img.so").getAbsolutePath(), "create", "-f", "qcow2",
+                disk.getAbsolutePath(), "1G").redirectErrorStream(true);
+        ipb.environment().put("LD_LIBRARY_PATH", bionic.getAbsolutePath());
+        Process img = ipb.start();
+        img.getInputStream().readAllBytes();
+        check(img.waitFor() == 0 && disk.exists(), "qemu-img create (disk for x86 guest)");
+        VmConfig x = VmConfig.template(3); // Windows template: IDE + e1000
         x.memMb = 256;
-        x.cdrom = "";
+        x.disk = disk.getAbsolutePath();
+        File bios = new File(xdir, "bios.log");
+        x.extraArgs = "-chardev file,id=dbg,path=" + bios.getAbsolutePath()
+                + " -device isa-debugcon,iobase=0x402,chardev=dbg";
         testVnc("x86_64-bios-vnc", x, bionic, bin, data, work);
+        String bl = bios.exists() ? new String(Files.readAllBytes(bios.toPath())) : "";
+        check(bl.contains("Booting from Hard Disk"), "SeaBIOS read the IDE disk (block coroutines)");
 
         // 3) serial console only: bare-metal aarch64 kernel writes to the UART
         System.out.println("== aarch64-serial");

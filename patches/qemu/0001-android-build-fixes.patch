@@ -23,10 +23,24 @@ index 90c086f1f86d..219444da1474 100644
  #ifdef __linux__
      if (!bs->bl.request_alignment) {
 diff --git a/meson.build b/meson.build
-index 40e3f4ec44c8..c0dd3e678fad 100644
+index 40e3f4ec44c8..8774f997e1a9 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -1369,7 +1369,9 @@ endif
+@@ -505,6 +505,13 @@ elif host_os == 'emscripten'
+ else
+   if host_os != 'darwin' and cc.links(ucontext_probe)
+     supported_backends += ['ucontext']
++  elif cc.get_define('__ANDROID__') != ''
++    # bionic lacks makecontext()/swapcontext(); coroutine-ucontext.c starts
++    # coroutines with a small assembly helper instead. The sigaltstack
++    # backend must not be used there: it siglongjmp()s into a signal frame
++    # that already returned, which bionic's PAC-protected siglongjmp rejects
++    # with SIGILL on CPUs with pointer authentication (e.g. Snapdragon 8 Elite).
++    supported_backends += ['ucontext']
+   endif
+   supported_backends += ['sigaltstack']
+ endif
+@@ -1369,7 +1376,9 @@ endif
  spice_headers = spice.partial_dependency(compile_args: true, includes: true)
  
  rt = not_found
@@ -37,7 +51,7 @@ index 40e3f4ec44c8..c0dd3e678fad 100644
    have_shm_open = cc.has_function('shm_open')
    if not have_shm_open
      rt = cc.find_library('rt', required: true)
-@@ -4569,7 +4571,10 @@ if have_tools
+@@ -4569,7 +4578,10 @@ if have_tools
  
    if have_ivshmem
      subdir('contrib/ivshmem-client')
@@ -63,8 +77,367 @@ index 78b301064963..4dd0183a199c 100644
  
  qtests_cxl = \
    (config_all_devices.has_key('CONFIG_CXL') ? ['cxl-test'] : [])
+diff --git a/util/android-crash.c b/util/android-crash.c
+new file mode 100644
+index 000000000000..e2e8c032227f
+--- /dev/null
++++ b/util/android-crash.c
+@@ -0,0 +1,129 @@
++/*
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * Android: print a crash report to stderr on fatal signals.
++ *
++ * QEMU runs as a child process of an Android app. Bionic's own crash
++ * reporter writes tombstones that an app cannot read without adb/root, so
++ * emit the essentials (signal, PC, faulting instruction, module + offset,
++ * frame-pointer backtrace, host CPU features) where the app can see them:
++ * QEMU's stderr, which the app stores in its log.
++ */
++
++#include "qemu/osdep.h"
++#include <dlfcn.h>
++#include <signal.h>
++#include <sys/auxv.h>
++#include <ucontext.h>
++
++/* Only linked into the emulators; weak so the tools link without TCG. */
++bool in_code_gen_buffer(const void *p) __attribute__((weak));
++
++#ifdef __aarch64__
++#include "host/cpuinfo.h"
++#endif
++
++static void out(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
++static void out(const char *fmt, ...)
++{
++    char buf[512];
++    va_list ap;
++    int n;
++
++    va_start(ap, fmt);
++    n = vsnprintf(buf, sizeof(buf), fmt, ap);
++    va_end(ap);
++    if (n > 0) {
++        ssize_t r = write(STDERR_FILENO, buf, MIN((size_t)n, sizeof(buf) - 1));
++        (void)r;
++    }
++}
++
++static void describe(const char *what, uintptr_t addr)
++{
++    Dl_info info;
++
++    if (addr && dladdr((void *)addr, &info) && info.dli_fname) {
++        const char *base = strrchr(info.dli_fname, '/');
++        out("  %s %#" PRIxPTR "  %s+%#" PRIxPTR " (%s+%#" PRIxPTR ")\n", what, addr,
++            base ? base + 1 : info.dli_fname, addr - (uintptr_t)info.dli_fbase,
++            info.dli_sname ? info.dli_sname : "?",
++            info.dli_saddr ? addr - (uintptr_t)info.dli_saddr : 0);
++    } else if (addr && in_code_gen_buffer && in_code_gen_buffer((void *)addr)) {
++        out("  %s %#" PRIxPTR "  [TCG JIT code]\n", what, addr);
++    } else {
++        out("  %s %#" PRIxPTR "\n", what, addr);
++    }
++}
++
++static void crash_handler(int sig, siginfo_t *si, void *ucv)
++{
++    ucontext_t *uc = ucv;
++    uintptr_t pc = 0, lr = 0, sp = 0, fp = 0;
++
++#ifdef __aarch64__
++    pc = uc->uc_mcontext.pc;
++    lr = uc->uc_mcontext.regs[30];
++    fp = uc->uc_mcontext.regs[29];
++    sp = uc->uc_mcontext.sp;
++#elif defined(__x86_64__)
++    pc = uc->uc_mcontext.gregs[REG_RIP];
++    fp = uc->uc_mcontext.gregs[REG_RBP];
++    sp = uc->uc_mcontext.gregs[REG_RSP];
++#endif
++
++    out("\n*** QEMU-ANDROID CRASH: signal %d (%s), code %d, fault addr %p\n",
++        sig, strsignal(sig), si->si_code, si->si_addr);
++    if (sig == SIGSYS) {
++        out("  blocked syscall %d (seccomp)\n", si->si_syscall);
++    }
++    describe("pc", pc);
++    describe("lr", lr);
++    out("  sp %#" PRIxPTR "  fp %#" PRIxPTR "\n", sp, fp);
++#ifdef __aarch64__
++    if (sig == SIGILL && pc && !(pc & 3)) {
++        out("  instruction at pc: %08x\n", *(const uint32_t *)pc);
++    }
++    {
++        uint64_t ctr;
++        asm volatile("mrs %0, ctr_el0" : "=r"(ctr));
++        out("  hwcap %#lx hwcap2 %#lx ctr_el0 %#" PRIx64 " cpuinfo %#x\n",
++            getauxval(AT_HWCAP), getauxval(AT_HWCAP2), ctr, cpuinfo);
++    }
++#endif
++    /* Frame-pointer walk (frame records are on by default for arm64 Android) */
++    out("  backtrace:\n");
++    for (int i = 0; i < 32 && fp && !(fp & 7); i++) {
++        uintptr_t next = ((uintptr_t *)fp)[0];
++        uintptr_t ret = ((uintptr_t *)fp)[1];
++        char what[16];
++        snprintf(what, sizeof(what), "#%02d", i);
++        describe(what, ret);
++        if (next <= fp || next - fp > (8u << 20)) {
++            break;
++        }
++        fp = next;
++    }
++    out("*** end of crash report\n");
++    /* SA_RESETHAND restored the default action; returning re-faults. */
++    if (sig == SIGSYS || sig == SIGABRT) {
++        raise(sig);
++    }
++}
++
++/* Referenced from oslib-posix.c so the linker keeps this object. */
++int qemu_android_crash_anchor;
++
++static void __attribute__((constructor)) android_crash_init(void)
++{
++    static const int sigs[] = { SIGILL, SIGSEGV, SIGBUS, SIGFPE, SIGTRAP, SIGSYS };
++    struct sigaction sa;
++
++    memset(&sa, 0, sizeof(sa));
++    sa.sa_sigaction = crash_handler;
++    sa.sa_flags = SA_SIGINFO | SA_RESETHAND;
++    sigemptyset(&sa.sa_mask);
++    for (size_t i = 0; i < ARRAY_SIZE(sigs); i++) {
++        sigaction(sigs[i], &sa, NULL);
++    }
++}
+diff --git a/util/coroutine-ucontext.c b/util/coroutine-ucontext.c
+index 8ef603d081ea..4b195b14e720 100644
+--- a/util/coroutine-ucontext.c
++++ b/util/coroutine-ucontext.c
+@@ -42,6 +42,146 @@
+ #include <sanitizer/tsan_interface.h>
+ #endif
+ 
++#ifdef __ANDROID__
++/*
++ * Android needs its own context switch:
++ *
++ * - bionic has no makecontext()/swapcontext(), which QEMU only uses to start
++ *   coroutine_trampoline() on a fresh stack: qemu_android_start_on_stack().
++ *
++ * - bionic's sigsetjmp() signs the saved return address with the PAC IA key,
++ *   and since Android 12 every thread gets its own keys (__pthread_start does
++ *   prctl(PR_PAC_RESET_KEYS) for apps targeting S+). QEMU resumes coroutines
++ *   on other threads than the one that created them, so on CPUs with pointer
++ *   authentication (e.g. Snapdragon 8 Elite) siglongjmp() fails with SIGILL.
++ *   qemu_android_ctx_save/restore save the callee-saved registers without
++ *   signing, and leave x18 (the per-thread shadow call stack) alone.
++ */
++typedef uint64_t qemu_android_jmp_buf[22];
++int qemu_android_ctx_save(qemu_android_jmp_buf buf) __attribute__((returns_twice));
++void qemu_android_ctx_restore(qemu_android_jmp_buf buf, int val) __attribute__((noreturn));
++void qemu_android_start_on_stack(void *stack_top, void (*fn)(int, int),
++                                 int a0, int a1) __attribute__((noreturn));
++#define sigjmp_buf qemu_android_jmp_buf
++#define sigsetjmp(buf, savemask) qemu_android_ctx_save(buf)
++#define siglongjmp(buf, val) qemu_android_ctx_restore(buf, val)
++
++#if defined(__aarch64__)
++asm(".text\n"
++    ".p2align 2\n"
++    ".globl qemu_android_ctx_save\n"
++    ".hidden qemu_android_ctx_save\n"
++    ".type qemu_android_ctx_save, %function\n"
++    "qemu_android_ctx_save:\n"
++    "    hint #34\n"                       /* bti c */
++    "    mov x16, sp\n"
++    "    stp x19, x20, [x0, #0]\n"
++    "    stp x21, x22, [x0, #16]\n"
++    "    stp x23, x24, [x0, #32]\n"
++    "    stp x25, x26, [x0, #48]\n"
++    "    stp x27, x28, [x0, #64]\n"
++    "    stp x29, x30, [x0, #80]\n"
++    "    str x16, [x0, #96]\n"
++    "    stp d8, d9, [x0, #104]\n"
++    "    stp d10, d11, [x0, #120]\n"
++    "    stp d12, d13, [x0, #136]\n"
++    "    stp d14, d15, [x0, #152]\n"
++    "    mov w0, #0\n"
++    "    ret\n"
++    ".size qemu_android_ctx_save, .-qemu_android_ctx_save\n"
++    "\n"
++    ".p2align 2\n"
++    ".globl qemu_android_ctx_restore\n"
++    ".hidden qemu_android_ctx_restore\n"
++    ".type qemu_android_ctx_restore, %function\n"
++    "qemu_android_ctx_restore:\n"
++    "    hint #34\n"
++    "    ldp x19, x20, [x0, #0]\n"
++    "    ldp x21, x22, [x0, #16]\n"
++    "    ldp x23, x24, [x0, #32]\n"
++    "    ldp x25, x26, [x0, #48]\n"
++    "    ldp x27, x28, [x0, #64]\n"
++    "    ldp x29, x30, [x0, #80]\n"
++    "    ldr x16, [x0, #96]\n"
++    "    ldp d8, d9, [x0, #104]\n"
++    "    ldp d10, d11, [x0, #120]\n"
++    "    ldp d12, d13, [x0, #136]\n"
++    "    ldp d14, d15, [x0, #152]\n"
++    "    mov sp, x16\n"
++    "    cmp w1, #0\n"
++    "    csinc w0, w1, wzr, ne\n"          /* never return 0 */
++    "    ret\n"
++    ".size qemu_android_ctx_restore, .-qemu_android_ctx_restore\n"
++    "\n"
++    ".p2align 2\n"
++    ".globl qemu_android_start_on_stack\n"
++    ".hidden qemu_android_start_on_stack\n"
++    ".type qemu_android_start_on_stack, %function\n"
++    "qemu_android_start_on_stack:\n"
++    "    hint #34\n"
++    "    mov sp, x0\n"
++    "    mov x29, #0\n"
++    "    mov x30, #0\n"
++    "    mov x16, x1\n"
++    "    mov w0, w2\n"
++    "    mov w1, w3\n"
++    "    br x16\n"
++    ".size qemu_android_start_on_stack, .-qemu_android_start_on_stack\n");
++#elif defined(__x86_64__)
++asm(".text\n"
++    ".globl qemu_android_ctx_save\n"
++    ".hidden qemu_android_ctx_save\n"
++    ".type qemu_android_ctx_save, @function\n"
++    "qemu_android_ctx_save:\n"
++    "    mov %rbx, 0(%rdi)\n"
++    "    mov %rbp, 8(%rdi)\n"
++    "    mov %r12, 16(%rdi)\n"
++    "    mov %r13, 24(%rdi)\n"
++    "    mov %r14, 32(%rdi)\n"
++    "    mov %r15, 40(%rdi)\n"
++    "    lea 8(%rsp), %rdx\n"              /* caller's rsp after return */
++    "    mov %rdx, 48(%rdi)\n"
++    "    mov (%rsp), %rdx\n"               /* return address */
++    "    mov %rdx, 56(%rdi)\n"
++    "    xor %eax, %eax\n"
++    "    ret\n"
++    ".size qemu_android_ctx_save, .-qemu_android_ctx_save\n"
++    "\n"
++    ".globl qemu_android_ctx_restore\n"
++    ".hidden qemu_android_ctx_restore\n"
++    ".type qemu_android_ctx_restore, @function\n"
++    "qemu_android_ctx_restore:\n"
++    "    mov %esi, %eax\n"
++    "    test %eax, %eax\n"
++    "    jnz 1f\n"
++    "    inc %eax\n"
++    "1:  mov 0(%rdi), %rbx\n"
++    "    mov 8(%rdi), %rbp\n"
++    "    mov 16(%rdi), %r12\n"
++    "    mov 24(%rdi), %r13\n"
++    "    mov 32(%rdi), %r14\n"
++    "    mov 40(%rdi), %r15\n"
++    "    mov 48(%rdi), %rsp\n"
++    "    jmp *56(%rdi)\n"
++    ".size qemu_android_ctx_restore, .-qemu_android_ctx_restore\n"
++    "\n"
++    ".globl qemu_android_start_on_stack\n"
++    ".hidden qemu_android_start_on_stack\n"
++    ".type qemu_android_start_on_stack, @function\n"
++    "qemu_android_start_on_stack:\n"
++    "    mov %rsi, %rax\n"
++    "    mov %rdi, %rsp\n"
++    "    xor %ebp, %ebp\n"
++    "    mov %edx, %edi\n"
++    "    mov %ecx, %esi\n"
++    "    push $0\n"                        /* fake return address: ABI alignment */
++    "    jmp *%rax\n"
++    ".size qemu_android_start_on_stack, .-qemu_android_start_on_stack\n");
++#else
++#error "coroutine context switch not implemented for this Android ABI"
++#endif
++#endif /* __ANDROID__ */
++
+ typedef struct {
+     Coroutine base;
+     void *stack;
+@@ -145,6 +285,7 @@ void start_switch_fiber_tsan(void **fake_stack_save,
+ #endif
+ }
+ 
++
+ static void coroutine_trampoline(int i0, int i1)
+ {
+     union cc_arg arg;
+@@ -193,9 +334,11 @@ Coroutine *qemu_coroutine_new(void)
+      * everything else.
+      */
+ 
++#ifndef __ANDROID__
+     if (getcontext(&uc) == -1) {
+         abort();
+     }
++#endif
+ 
+     co = g_malloc0(sizeof(*co));
+     co->stack_size = COROUTINE_STACK_SIZE;
+@@ -206,10 +349,12 @@ Coroutine *qemu_coroutine_new(void)
+ #endif
+     co->base.entry_arg = &old_env; /* stash away our jmp_buf */
+ 
++#ifndef __ANDROID__
+     uc.uc_link = &old_uc;
+     uc.uc_stack.ss_sp = co->stack;
+     uc.uc_stack.ss_size = co->stack_size;
+     uc.uc_stack.ss_flags = 0;
++#endif
+ 
+ #ifdef CONFIG_VALGRIND_H
+     co->valgrind_stack_id =
+@@ -219,8 +364,10 @@ Coroutine *qemu_coroutine_new(void)
+     arg.p = co;
+ 
+     on_new_fiber(co);
++#ifndef __ANDROID__
+     makecontext(&uc, (void (*)(void))coroutine_trampoline,
+                 2, arg.i[0], arg.i[1]);
++#endif
+ 
+     /* swapcontext() in, siglongjmp() back out */
+     if (!sigsetjmp(old_env, 0)) {
+@@ -243,7 +390,14 @@ Coroutine *qemu_coroutine_new(void)
+         __safestack_unsafe_stack_ptr = usp;
+ #endif
+ 
++#ifdef __ANDROID__
++        (void)old_uc;
++        (void)uc;
++        qemu_android_start_on_stack((char *)co->stack + co->stack_size,
++                                    coroutine_trampoline, arg.i[0], arg.i[1]);
++#else
+         swapcontext(&old_uc, &uc);
++#endif
+     }
+ 
+     finish_switch_fiber(fake_stack_save);
+diff --git a/util/meson.build b/util/meson.build
+index fa174c07a57a..5fb937f48d89 100644
+--- a/util/meson.build
++++ b/util/meson.build
+@@ -39,6 +39,9 @@ util_ss.add(files('host-utils.c'))
+ util_ss.add(files('bitmap.c', 'bitops.c'))
+ util_ss.add(files('fifo8.c'))
+ util_ss.add(files('cacheflush.c'))
++if cc.get_define('__ANDROID__') != ''
++  util_ss.add(files('android-crash.c'))
++endif
+ util_ss.add(files('error.c', 'error-report.c'))
+ util_ss.add(files('qemu-print.c'))
+ util_ss.add(files('id.c'))
 diff --git a/util/oslib-posix.c b/util/oslib-posix.c
-index dc001da66dd4..29b8489a6812 100644
+index dc001da66dd4..cace101add95 100644
 --- a/util/oslib-posix.c
 +++ b/util/oslib-posix.c
 @@ -27,6 +27,7 @@
@@ -75,11 +448,15 @@ index dc001da66dd4..29b8489a6812 100644
  #include <termios.h>
  
  #include <glib/gprintf.h>
-@@ -982,6 +983,17 @@ void qemu_close_all_open_fd(const int *skip, unsigned int nskip)
+@@ -982,6 +983,21 @@ void qemu_close_all_open_fd(const int *skip, unsigned int nskip)
      }
  }
  
 +#ifdef __ANDROID__
++/* Pull util/android-crash.c (a constructor only) out of libqemuutil.a */
++extern int qemu_android_crash_anchor;
++__attribute__((used)) static int *const android_crash_keep = &qemu_android_crash_anchor;
++
 +/*
 + * Android (bionic) does not provide POSIX shared memory (shm_open). An
 + * anonymous memfd gives the same semantics: an fd backed by shared memory
@@ -93,7 +470,7 @@ index dc001da66dd4..29b8489a6812 100644
  int qemu_shm_alloc(size_t size, Error **errp)
  {
      g_autoptr(GString) shm_name = g_string_new(NULL);
-@@ -1033,3 +1045,4 @@ int qemu_shm_alloc(size_t size, Error **errp)
+@@ -1033,3 +1049,4 @@ int qemu_shm_alloc(size_t size, Error **errp)
  
      return fd;
  }
