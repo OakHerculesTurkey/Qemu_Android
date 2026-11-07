@@ -8,6 +8,7 @@ import android.graphics.Paint;
 import android.graphics.RectF;
 import android.text.InputType;
 import android.view.GestureDetector;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -16,21 +17,23 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 
 import com.oakherculesturkey.qemu.core.Keysyms;
+import com.oakherculesturkey.qemu.core.Modifiers;
 import com.oakherculesturkey.qemu.core.RfbClient;
 
 /**
  * Shows the guest framebuffer and turns touch / keyboard input into RFB
- * events. Two pointer modes:
- *  - touch:    the finger is the mouse (tap = click, long press = right click,
- *              drag = left drag, two fingers = scroll wheel)
- *  - touchpad: relative cursor like a laptop touchpad (tap = click,
- *              two-finger tap = right click, long press + move = drag)
+ * events.
+ *
+ * One finger, "touch" mode: the finger is the mouse (tap = click, long press =
+ * right click, drag = left drag).
+ * One finger, "touchpad" mode: relative cursor (tap = click, long press then
+ * move = drag, two-finger tap = right click).
+ * Two fingers: pinch = zoom; drag = scroll wheel at 1x, pan when zoomed in.
  */
 public class VncView extends View {
 
-    /** Supplies one-shot modifiers selected on the toolbar (Ctrl, Alt, ...). */
-    interface ModifierSource {
-        int[] takeModifiers();
+    interface Listener {
+        void onZoomChanged(float zoom);
     }
 
     private final Object lock = new Object();
@@ -39,26 +42,35 @@ public class VncView extends View {
     private final RectF dst = new RectF();
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Paint cursorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint cursorFill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private volatile RfbClient client;
-    private ModifierSource modifiers;
+    private Modifiers mods;
+    private Listener listener;
 
     private boolean touchpad;
     private float cursorX, cursorY;
     private int buttons;
     private boolean dragging;
     private boolean multiTouch;
-    private float lastX, lastY, scrollAccum;
+    private float lastX, lastY;
     private final GestureDetector gestures;
     private String composing = "";
+
+    // zoom / pan
+    private float zoom = 1f, panX, panY;
+    private static final int TWO_NONE = 0, TWO_UNDECIDED = 1, TWO_SCROLL = 2, TWO_PAN = 3, TWO_ZOOM = 4;
+    private int twoMode = TWO_NONE;
+    private float startSpan, lastSpan, focusX, focusY, startFocusX, startFocusY, scrollAccum;
 
     public VncView(Context c) {
         super(c);
         setFocusable(true);
         setFocusableInTouchMode(true);
         setBackgroundColor(Color.BLACK);
-        cursorPaint.setColor(Color.WHITE);
+        cursorPaint.setColor(Color.BLACK);
         cursorPaint.setStyle(Paint.Style.STROKE);
-        cursorPaint.setStrokeWidth(Ui.dp(c, 2));
+        cursorPaint.setStrokeWidth(Ui.dp(c, 1.5f));
+        cursorFill.setColor(Color.WHITE);
         gestures = new GestureDetector(c, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDown(MotionEvent e) {
@@ -75,10 +87,9 @@ public class VncView extends View {
 
             @Override
             public void onLongPress(MotionEvent e) {
-                if (multiTouch) return;
+                if (multiTouch || dragging) return;
                 if (touchpad) {
-                    // start a drag at the cursor position
-                    dragging = true;
+                    dragging = true; // drag at the cursor position
                     buttons = RfbClient.BUTTON_LEFT;
                     sendPointer();
                 } else {
@@ -88,23 +99,22 @@ public class VncView extends View {
                 performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
             }
         });
-        gestures.setIsLongpressEnabled(true);
     }
 
     void setClient(RfbClient c) {
         client = c;
     }
 
-    void setModifierSource(ModifierSource m) {
-        modifiers = m;
+    void setModifiers(Modifiers m) {
+        mods = m;
+    }
+
+    void setListener(Listener l) {
+        listener = l;
     }
 
     void setTouchpad(boolean on) {
         touchpad = on;
-        if (on && fbW > 0) {
-            cursorX = fbW / 2f;
-            cursorY = fbH / 2f;
-        }
         invalidate();
     }
 
@@ -123,6 +133,7 @@ public class VncView extends View {
             cursorX = w / 2f;
             cursorY = h / 2f;
         }
+        post(this::clampPan);
         postInvalidate();
     }
 
@@ -138,19 +149,40 @@ public class VncView extends View {
     }
 
     @Override
+    protected void onSizeChanged(int w, int h, int ow, int oh) {
+        clampPan();
+    }
+
+    @Override
     protected void onDraw(Canvas canvas) {
         synchronized (lock) {
             if (bitmap == null) return;
             computeDst();
+            paint.setFilterBitmap(dst.width() < fbW * 1.5f); // crisp pixels when zoomed in
             canvas.drawBitmap(bitmap, null, dst, paint);
             if (touchpad) {
                 float sx = dst.left + cursorX * dst.width() / fbW;
                 float sy = dst.top + cursorY * dst.height() / fbH;
-                float r = Ui.dp(getContext(), 7);
-                canvas.drawCircle(sx, sy, r, cursorPaint);
-                canvas.drawPoint(sx, sy, cursorPaint);
+                float s = Ui.dp(getContext(), 1);
+                android.graphics.Path p = new android.graphics.Path();
+                p.moveTo(sx, sy);
+                p.lineTo(sx, sy + 17 * s);
+                p.lineTo(sx + 4.5f * s, sy + 13 * s);
+                p.lineTo(sx + 8 * s, sy + 20 * s);
+                p.lineTo(sx + 10.5f * s, sy + 19 * s);
+                p.lineTo(sx + 7 * s, sy + 12 * s);
+                p.lineTo(sx + 12.5f * s, sy + 12 * s);
+                p.close();
+                canvas.drawPath(p, cursorFill);
+                canvas.drawPath(p, cursorPaint);
             }
         }
+    }
+
+    private float baseScale() {
+        float vw = getWidth(), vh = getHeight();
+        if (fbW == 0 || fbH == 0 || vw == 0 || vh == 0) return 1;
+        return Math.min(vw / fbW, vh / fbH);
     }
 
     private void computeDst() {
@@ -159,9 +191,65 @@ public class VncView extends View {
             dst.set(0, 0, 0, 0);
             return;
         }
-        float s = Math.min(vw / fbW, vh / fbH);
+        float s = baseScale() * zoom;
         float w = fbW * s, h = fbH * s;
-        dst.set((vw - w) / 2, (vh - h) / 2, (vw + w) / 2, (vh + h) / 2);
+        float left = (vw - w) / 2 + panX, top = baseTop(h) + panY;
+        dst.set(left, top, left + w, top + h);
+    }
+
+    /** Images shorter than the view sit at the top (free space goes below). */
+    private float baseTop(float h) {
+        float vh = getHeight();
+        return h < vh ? 0 : (vh - h) / 2;
+    }
+
+    private void clampPan() {
+        float vw = getWidth(), vh = getHeight();
+        float s = baseScale() * zoom;
+        float mx = Math.max(0, (fbW * s - vw) / 2), my = Math.max(0, (fbH * s - vh) / 2);
+        panX = Math.max(-mx, Math.min(mx, panX));
+        panY = Math.max(-my, Math.min(my, panY));
+    }
+
+    void resetZoom() {
+        zoom = 1;
+        panX = panY = 0;
+        invalidate();
+        if (listener != null) listener.onZoomChanged(zoom);
+    }
+
+    float getZoom() {
+        return zoom;
+    }
+
+    private void zoomAt(float fx, float fy, float factor) {
+        computeDst();
+        if (dst.width() <= 0) return;
+        float u = (fx - dst.left) / dst.width(), v = (fy - dst.top) / dst.height();
+        float nz = Math.max(1f, Math.min(5f, zoom * factor));
+        if (nz == zoom) return;
+        zoom = nz;
+        float s = baseScale() * zoom;
+        float w = fbW * s, h = fbH * s;
+        panX = fx - u * w - (getWidth() - w) / 2;
+        panY = fy - v * h - baseTop(h);
+        clampPan();
+        invalidate();
+        if (listener != null) listener.onZoomChanged(zoom);
+    }
+
+    /** In touchpad mode, keep the cursor on screen while zoomed in. */
+    private void followCursor() {
+        if (zoom <= 1f) return;
+        computeDst();
+        float sx = dst.left + cursorX * dst.width() / fbW;
+        float sy = dst.top + cursorY * dst.height() / fbH;
+        float m = Ui.dp(getContext(), 40);
+        if (sx < m) panX += m - sx;
+        if (sx > getWidth() - m) panX -= sx - (getWidth() - m);
+        if (sy < m) panY += m - sy;
+        if (sy > getHeight() - m) panY -= sy - (getHeight() - m);
+        clampPan();
     }
 
     // ---- Pointer -------------------------------------------------------------
@@ -192,7 +280,13 @@ public class VncView extends View {
         if (touchpad) invalidate();
     }
 
-    private void wheel(int steps) {
+    /** Mouse button from the on-screen keyboard (held while the key is held). */
+    void mouseButton(int mask, boolean down) {
+        buttons = down ? (buttons | mask) : (buttons & ~mask);
+        sendPointer();
+    }
+
+    void wheel(int steps) {
         RfbClient c = client;
         if (c == null) return;
         int b = steps > 0 ? RfbClient.WHEEL_UP : RfbClient.WHEEL_DOWN;
@@ -210,63 +304,34 @@ public class VncView extends View {
         if (action == MotionEvent.ACTION_DOWN) {
             multiTouch = false;
             dragging = false;
+            twoMode = TWO_NONE;
             lastX = e.getX();
             lastY = e.getY();
-            scrollAccum = 0;
         }
-        if (action == MotionEvent.ACTION_POINTER_DOWN) {
+        if (action == MotionEvent.ACTION_POINTER_DOWN && e.getPointerCount() == 2) {
             multiTouch = true;
-            lastY = avgY(e);
+            twoMode = TWO_UNDECIDED;
+            startSpan = lastSpan = span(e);
+            startFocusX = focusX = avg(e, true);
+            startFocusY = focusY = avg(e, false);
             scrollAccum = 0;
         }
         gestures.onTouchEvent(e);
 
         if (action == MotionEvent.ACTION_MOVE) {
-            if (e.getPointerCount() >= 2) {
-                float y = avgY(e);
-                scrollAccum += y - lastY;
-                lastY = y;
-                float step = Ui.dp(getContext(), 24);
-                int steps = (int) (scrollAccum / step);
-                if (steps != 0) {
-                    scrollAccum -= steps * step;
-                    wheel(steps);
-                }
+            if (e.getPointerCount() >= 2 && twoMode != TWO_NONE) {
+                twoFingerMove(e);
             } else if (!multiTouch) {
-                float dx = e.getX() - lastX, dy = e.getY() - lastY;
-                if (touchpad) {
-                    computeDst();
-                    if (dst.width() > 0) {
-                        // a bit of acceleration makes a small phone screen usable
-                        float speed = (float) Math.hypot(dx, dy);
-                        float accel = Math.min(3f, 1f + speed / Ui.dp(getContext(), 30));
-                        cursorX = clamp(cursorX + dx * accel * fbW / dst.width(), fbW);
-                        cursorY = clamp(cursorY + dy * accel * fbH / dst.height(), fbH);
-                        sendPointer();
-                        invalidate();
-                    }
-                    lastX = e.getX();
-                    lastY = e.getY();
-                } else {
-                    float slop = Ui.dp(getContext(), 8);
-                    if (!dragging && Math.hypot(dx, dy) > slop) {
-                        // finger drag = left-button drag starting where it went down
-                        dragging = true;
-                        moveTo(lastX, lastY);
-                        buttons = RfbClient.BUTTON_LEFT;
-                        sendPointer();
-                    }
-                    if (dragging) moveTo(e.getX(), e.getY());
-                }
+                oneFingerMove(e);
             }
         }
         if (action == MotionEvent.ACTION_POINTER_UP && touchpad && e.getPointerCount() == 2
-                && Math.abs(scrollAccum) < Ui.dp(getContext(), 6)
-                && e.getEventTime() - e.getDownTime() < 300) {
-            click(RfbClient.BUTTON_RIGHT);
+                && twoMode == TWO_UNDECIDED && e.getEventTime() - e.getDownTime() < 300) {
+            click(RfbClient.BUTTON_RIGHT); // two-finger tap
         }
+        if (action == MotionEvent.ACTION_POINTER_UP) twoMode = TWO_NONE;
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-            if (buttons != 0) {
+            if (dragging && buttons != 0) {
                 buttons = 0;
                 sendPointer();
             }
@@ -275,16 +340,87 @@ public class VncView extends View {
         return true;
     }
 
-    private static float avgY(MotionEvent e) {
+    private void oneFingerMove(MotionEvent e) {
+        float dx = e.getX() - lastX, dy = e.getY() - lastY;
+        if (touchpad) {
+            computeDst();
+            if (dst.width() > 0) {
+                // acceleration makes a small phone screen usable
+                float speed = (float) Math.hypot(dx, dy);
+                float accel = Math.min(3f, 1f + speed / Ui.dp(getContext(), 30));
+                float k = accel / (baseScale() * Math.max(1f, zoom * 0.7f));
+                cursorX = clamp(cursorX + dx * k, fbW);
+                cursorY = clamp(cursorY + dy * k, fbH);
+                sendPointer();
+                followCursor();
+                invalidate();
+            }
+            lastX = e.getX();
+            lastY = e.getY();
+        } else {
+            float slop = Ui.dp(getContext(), 8);
+            if (!dragging && Math.hypot(dx, dy) > slop) {
+                // finger drag = left-button drag from where it went down
+                dragging = true;
+                moveTo(lastX, lastY);
+                buttons |= RfbClient.BUTTON_LEFT;
+                sendPointer();
+            }
+            if (dragging) moveTo(e.getX(), e.getY());
+        }
+    }
+
+    private void twoFingerMove(MotionEvent e) {
+        float sp = span(e), fx = avg(e, true), fy = avg(e, false);
+        if (twoMode == TWO_UNDECIDED) {
+            float d = Ui.dp(getContext(), 20);
+            if (Math.abs(sp - startSpan) > d) {
+                twoMode = TWO_ZOOM;
+            } else if (Math.hypot(fx - startFocusX, fy - startFocusY) > d / 2) {
+                twoMode = zoom > 1.01f ? TWO_PAN : TWO_SCROLL;
+            }
+        }
+        if (twoMode == TWO_ZOOM) {
+            if (lastSpan > 0) zoomAt(fx, fy, sp / lastSpan);
+            panX += fx - focusX;
+            panY += fy - focusY;
+            clampPan();
+            invalidate();
+        } else if (twoMode == TWO_PAN) {
+            panX += fx - focusX;
+            panY += fy - focusY;
+            clampPan();
+            invalidate();
+        } else if (twoMode == TWO_SCROLL) {
+            scrollAccum += fy - focusY;
+            float step = Ui.dp(getContext(), 24);
+            int steps = (int) (scrollAccum / step);
+            if (steps != 0) {
+                scrollAccum -= steps * step;
+                wheel(steps);
+            }
+        }
+        lastSpan = sp;
+        focusX = fx;
+        focusY = fy;
+    }
+
+    private static float span(MotionEvent e) {
+        if (e.getPointerCount() < 2) return 0;
+        return (float) Math.hypot(e.getX(0) - e.getX(1), e.getY(0) - e.getY(1));
+    }
+
+    private static float avg(MotionEvent e, boolean x) {
         float s = 0;
-        for (int i = 0; i < e.getPointerCount(); i++) s += e.getY(i);
-        return s / e.getPointerCount();
+        int n = Math.min(2, e.getPointerCount());
+        for (int i = 0; i < n; i++) s += x ? e.getX(i) : e.getY(i);
+        return s / n;
     }
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent e) {
-        // physical mouse / trackpad (OTG, Bluetooth, DeX-like setups)
-        if (e.isFromSource(android.view.InputDevice.SOURCE_MOUSE)) {
+        // physical mouse / trackpad (USB OTG, Bluetooth, DeX)
+        if (e.isFromSource(InputDevice.SOURCE_MOUSE)) {
             int a = e.getActionMasked();
             if (a == MotionEvent.ACTION_HOVER_MOVE) {
                 moveTo(e.getX(), e.getY());
@@ -310,20 +446,22 @@ public class VncView extends View {
 
     // ---- Keyboard -------------------------------------------------------------
 
-    /** Sends one key press wrapped in the toolbar's sticky modifiers. */
+    /** Physical-key event from the on-screen PC keyboard. */
+    void scancode(int keysym, int qnum, boolean down) {
+        RfbClient c = client;
+        if (c != null) c.sendScancode(keysym, qnum, down);
+    }
+
+    /** One key press by keysym; on-screen modifiers are already held in the guest. */
     void tap(int keysym) {
         RfbClient c = client;
         if (c == null) return;
-        int[] mods = modifiers != null ? modifiers.takeModifiers() : new int[0];
-        c.tapKey(keysym, mods);
+        if (mods != null) mods.keyDown();
+        c.tapKey(keysym);
+        if (mods != null) mods.keyUp();
     }
 
-    void tapCombo(int keysym, int... mods) {
-        RfbClient c = client;
-        if (c != null) c.tapKey(keysym, mods);
-    }
-
-    /** Text from the soft keyboard. */
+    /** Text from the Android soft keyboard. */
     void sendText(CharSequence text) {
         RfbClient c = client;
         if (c == null) return;
@@ -331,17 +469,18 @@ public class VncView extends View {
             int cp = Character.codePointAt(text, i);
             i += Character.charCount(cp);
             int sym = Keysyms.forChar(cp);
-            int[] sticky = modifiers != null ? modifiers.takeModifiers() : new int[0];
-            if (Keysyms.needsShift(cp)) {
-                int[] m = new int[sticky.length + 1];
-                System.arraycopy(sticky, 0, m, 0, sticky.length);
-                m[sticky.length] = Keysyms.SHIFT_L;
-                c.tapKey(sym, m);
-            } else if (sticky.length > 0 && cp >= 'A' && cp <= 'Z') {
-                c.tapKey(Character.toLowerCase(cp), sticky);
+            boolean shiftHeld = mods != null && mods.active(Modifiers.SHIFT);
+            boolean otherMods = mods != null && (mods.active(Modifiers.CTRL)
+                    || mods.active(Modifiers.ALT) || mods.active(Modifiers.WIN));
+            if (mods != null) mods.keyDown();
+            if (otherMods && cp >= 'A' && cp <= 'Z') {
+                c.tapKey(Character.toLowerCase(cp)); // Ctrl+C, not Ctrl+Shift+C
+            } else if (Keysyms.needsShift(cp) && !shiftHeld) {
+                c.tapKey(sym, Keysyms.SHIFT_L);
             } else {
-                c.tapKey(sym, sticky);
+                c.tapKey(sym);
             }
+            if (mods != null) mods.keyUp();
         }
     }
 
@@ -399,23 +538,19 @@ public class VncView extends View {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent e) {
         if (isSystemKey(keyCode)) return super.onKeyDown(keyCode, e);
-        int sym = specialKeysym(keyCode);
         RfbClient c = client;
         if (c == null) return true;
+        int sym = specialKeysym(keyCode);
         if (sym != 0) {
-            if (isModifier(keyCode)) {
-                c.sendKey(sym, true);
-            } else {
-                tap(sym);
-            }
+            if (isModifier(keyCode)) c.sendKey(sym, true);
+            else tap(sym);
             return true;
         }
         int uc = e.getUnicodeChar(e.getMetaState()
                 & ~(KeyEvent.META_CTRL_MASK | KeyEvent.META_ALT_MASK | KeyEvent.META_META_MASK));
-        if (uc != 0 && (uc & KeyCharacterMapCombining) == 0) {
-            boolean physicalShift = e.isShiftPressed();
-            if (physicalShift) {
-                c.tapKey(Keysyms.forChar(uc)); // Shift_L is already held down
+        if (uc != 0 && (uc & COMBINING_ACCENT) == 0) {
+            if (e.isShiftPressed()) {
+                tap(Keysyms.forChar(uc)); // Shift_L is already held down
             } else {
                 sendText(new String(Character.toChars(uc)));
             }
@@ -424,7 +559,7 @@ public class VncView extends View {
         return super.onKeyDown(keyCode, e);
     }
 
-    private static final int KeyCharacterMapCombining = 0x80000000;
+    private static final int COMBINING_ACCENT = 0x80000000;
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent e) {

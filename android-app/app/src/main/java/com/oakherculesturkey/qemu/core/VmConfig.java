@@ -48,6 +48,12 @@ public final class VmConfig {
      *  ps2    - PS/2 keyboard and mouse only (relative mouse)
      */
     public String input = "xhci";
+    /**
+     * Guest keyboard layout for text typed with the Android keyboard (QEMU
+     * "-k"). The on-screen PC keyboard sends physical scancodes and does not
+     * depend on it; "tr" also shows Turkish key labels there.
+     */
+    public String keymap = "en-us";
 
     /** user | none */
     public String network = "user";
@@ -112,6 +118,7 @@ public final class VmConfig {
         p.setProperty("gpu", gpu);
         p.setProperty("usbInput", Boolean.toString(usbInput));
         p.setProperty("input", input);
+        p.setProperty("keymap", keymap);
         p.setProperty("network", network);
         p.setProperty("nic", nic);
         p.setProperty("hostfwd", hostfwd);
@@ -142,6 +149,7 @@ public final class VmConfig {
         gpu = p.getProperty("gpu", gpu);
         usbInput = Boolean.parseBoolean(p.getProperty("usbInput", Boolean.toString(usbInput)));
         input = p.getProperty("input", input);
+        keymap = p.getProperty("keymap", keymap);
         network = p.getProperty("network", network);
         nic = p.getProperty("nic", nic);
         hostfwd = p.getProperty("hostfwd", hostfwd);

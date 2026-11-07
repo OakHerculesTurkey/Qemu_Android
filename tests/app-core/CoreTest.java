@@ -1,4 +1,6 @@
 import com.oakherculesturkey.qemu.core.CommandBuilder;
+import com.oakherculesturkey.qemu.core.KeyLayouts;
+import com.oakherculesturkey.qemu.core.Modifiers;
 import com.oakherculesturkey.qemu.core.QmpClient;
 import com.oakherculesturkey.qemu.core.RfbClient;
 import com.oakherculesturkey.qemu.core.Shell;
@@ -96,6 +98,17 @@ public class CoreTest {
         }
     }
 
+    /** Raw framebuffer (int w, int h, ARGB ints) for the app's screenshot test. */
+    static void saveFramebuffer(RfbClient rfb, java.lang.reflect.Field f, File out) throws Exception {
+        int[] fb = (int[]) f.get(rfb);
+        try (java.io.DataOutputStream o = new java.io.DataOutputStream(
+                new java.io.BufferedOutputStream(new java.io.FileOutputStream(out)))) {
+            o.writeInt(rfb.getWidth());
+            o.writeInt(rfb.getHeight());
+            for (int px : fb) o.writeInt(px);
+        }
+    }
+
     static void testVnc(String label, VmConfig cfg, File bionic, File bin, File data, File work)
             throws Exception {
         System.out.println("== " + label);
@@ -138,8 +151,26 @@ public class CoreTest {
             // input path: must not break the connection
             rfb.sendPointer(10, 10, 0);
             rfb.tapKey(com.oakherculesturkey.qemu.core.Keysyms.ESCAPE);
+            check(rfb.hasExtendedKeys(), "server accepted QEMU extended key events (scancodes)");
+            if (!cfg.isAarch64()) {
+                // physical Esc (scancode 0x01) at SeaBIOS' "Press ESC for boot menu"
+                File bios = new File(p.vmDir, "bios.log");
+                long until = System.currentTimeMillis() + 20000;
+                while (System.currentTimeMillis() < until) {
+                    rfb.sendScancode(com.oakherculesturkey.qemu.core.Keysyms.ESCAPE, 0x01, true);
+                    Thread.sleep(60);
+                    rfb.sendScancode(com.oakherculesturkey.qemu.core.Keysyms.ESCAPE, 0x01, false);
+                    Thread.sleep(400);
+                    if (bios.exists() && new String(Files.readAllBytes(bios.toPath()))
+                            .contains("Select boot device")) break;
+                }
+                String bl = bios.exists() ? new String(Files.readAllBytes(bios.toPath())) : "";
+                check(bl.contains("Select boot device"),
+                        "scancode Esc reached the guest (SeaBIOS boot menu opened)");
+            }
             Thread.sleep(300);
             check(err[0] == null && !rfb.isClosed(), "VNC input accepted, connection alive");
+            saveFramebuffer(rfb, f, new File(work, label + ".fb"));
 
             String st = qmp(p, QmpClient.command("query-status"));
             check(st.contains("running"), "QMP query-status: " + QmpClient.describe(st));
@@ -186,14 +217,16 @@ public class CoreTest {
             img.getInputStream().readAllBytes();
             check(img.waitFor() == 0 && disk.exists(), "qemu-img create (" + label + ")");
             VmConfig x = VmConfig.template(tpl);
+            if (tpl == 3) x.keymap = "tr"; // exercises "-k tr"
             x.memMb = 256;
             x.disk = disk.getAbsolutePath();
             File bios = new File(xdir, "bios.log");
             x.extraArgs = "-chardev file,id=dbg,path=" + bios.getAbsolutePath()
-                    + " -device isa-debugcon,iobase=0x402,chardev=dbg";
+                    + " -device isa-debugcon,iobase=0x402,chardev=dbg -boot menu=on,splash-time=15000";
             testVnc(label, x, bionic, bin, data, work);
             String bl = bios.exists() ? new String(Files.readAllBytes(bios.toPath())) : "";
-            check(bl.contains("Booting from Hard Disk"), label + ": SeaBIOS read the IDE disk");
+            check(bl.contains("QEMU HARDDISK"),
+                    label + ": SeaBIOS found the IDE disk");
         }
 
         // 3) serial console only: bare-metal aarch64 kernel writes to the UART
@@ -226,7 +259,37 @@ public class CoreTest {
             proc.destroyForcibly();
         }
 
-        // 4) pure helpers
+        // 4) keyboard layouts and modifier logic
+        for (boolean tr : new boolean[]{false, true}) {
+            java.util.List<java.util.List<KeyLayouts.Key>> rows = KeyLayouts.full(tr);
+            boolean ok = rows.size() == 6;
+            for (java.util.List<KeyLayouts.Key> r : rows)
+                for (KeyLayouts.Key k : r)
+                    if (k.kind == KeyLayouts.KIND_KEY && k.qnum == 0) ok = false;
+            check(ok, (tr ? "Turkish" : "US") + " layout: 6 rows, every key has a scancode");
+        }
+        check(KeyLayouts.full(true).get(2).get(8).label.equals("ı")
+                && KeyLayouts.full(true).get(2).get(8).qnum == 0x17, "Turkish ı sits on the physical I key");
+        final java.util.List<String> ev = new java.util.ArrayList<>();
+        Modifiers mods = new Modifiers();
+        mods.setSink((sym, q, down) -> ev.add(Integer.toHexString(q) + (down ? "+" : "-")));
+        mods.press(Modifiers.CTRL); mods.release(Modifiers.CTRL);       // tap -> one-shot
+        mods.keyDown(); mods.keyUp();                                    // next key consumes it
+        check(ev.toString().equals("[1d+, 1d-]") && mods.state(Modifiers.CTRL) == Modifiers.OFF,
+                "modifier tap = one-shot " + ev);
+        ev.clear();
+        mods.press(Modifiers.ALT); mods.keyDown(); mods.keyUp(); mods.release(Modifiers.ALT); // chord
+        check(ev.toString().equals("[38+, 38-]"), "modifier hold = chord " + ev);
+        ev.clear();
+        mods.press(Modifiers.SHIFT); mods.release(Modifiers.SHIFT);
+        mods.press(Modifiers.SHIFT); mods.release(Modifiers.SHIFT);     // double tap -> locked
+        mods.keyDown(); mods.keyUp(); mods.keyDown(); mods.keyUp();
+        boolean locked = mods.state(Modifiers.SHIFT) == Modifiers.LOCKED;
+        mods.press(Modifiers.SHIFT); mods.release(Modifiers.SHIFT);     // third tap unlocks
+        check(locked && ev.toString().equals("[2a+, 2a-]") && mods.state(Modifiers.SHIFT) == Modifiers.OFF,
+                "modifier double tap = lock " + ev);
+
+        // 5) pure helpers
         check(Shell.split("-device 'virtio-rng-pci,id=r0' -object \"a b\"").size() == 4, "Shell.split quoting");
         check(QmpClient.describe("{\"return\": \"a\\nb\"}").equals("a\nb"), "QMP string unescape");
 

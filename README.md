@@ -39,9 +39,15 @@ cihazlar için). PC gerekmez: APK'yı telefona indirip kurmanız yeterli.
   yollarını kopyalamadan kullanma.
 * **Ekran** — dahili VNC görüntüleyici (QEMU'ya uygulamaya özel unix soketiyle bağlanır,
   dışarıya port açmaz). İki fare modu: *Dokunma* (dokunduğun yere tıklar, uzun bas = sağ
-  tık, sürükle, iki parmak = kaydırma) ve *Touchpad* (göreli imleç). Ekran klavyesi,
-  donanım klavye/fare, Ctrl/Alt/Shift/Win (yapışkan), Esc, Tab, oklar, F1–F12,
-  Ctrl+Alt+Del.
+  tık, sürükle) ve *Touchpad* (göreli imleç). İki parmak: kıstır = yakınlaştır,
+  kaydır = fare tekerleği (yakınken ekranı kaydırır).
+* **PC klavyesi** — uygulama içi tam klavye (Esc, F1–F12, Ctrl/Win/Alt/AltGr/Shift,
+  oklar; Türkçe Q veya ABD etiketleri), *Gezinme* sayfası (Ins/Home/End/PgUp/PgDn,
+  PrtSc, Pause, Ctrl+Alt+Del, Ctrl+Shift+Esc, Alt+Tab, Alt+F4, Win+R, fare tuşları ve
+  tekerlek), ekran altında hızlı tuş satırı. Tuşlar QEMU'nun "extended key event"i ile
+  **gerçek PC tuş kodu** gönderir, yani çıkan karakteri misafirin klavye düzeni belirler;
+  basılı tutma (otomatik tekrar) ve çoklu dokunma (Ctrl+C) çalışır. Değiştirici tuşlar:
+  bir dokunuş = sonraki tuşa, iki dokunuş = kilitli. Metin için Android klavyesi de açılabilir.
 * **Güç** — duraklat / devam / reset / ACPI kapat / zorla kapat (QMP).
 * **Seri konsol**, **QEMU monitörü** (HMP komutları: `info status`, `change cd0 ...`,
   `savevm` …) ve **Log** ekranı; log'u tek tuşla paylaşma (hata ayıklamak için).
@@ -55,6 +61,10 @@ APK derleme:
 ./build.sh                 # QEMU (arm64-v8a)
 ./scripts/build-apk.sh     # Android SDK'yı kurar, dist/qemu-android-<sürüm>.apk üretir
 ```
+
+Arayüz ekran görüntüleri (cihaz gerekmez; Robolectric gerçek View'ları çizer):
+`cd android-app && ./gradlew testDebugUnitTest -PqemuFb=<core testin kaydettiği .fb>`
+→ `app/build/screenshots/*.png`.
 
 Uygulamanın QEMU'yu süren saf Java çekirdeği (komut oluşturucu, VNC/RFB istemcisi,
 QMP istemcisi) gerçek QEMU Android derlemesine karşı test edilir:

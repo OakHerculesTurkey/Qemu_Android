@@ -33,6 +33,7 @@ public final class Keysyms {
     public static final int SCROLL_LOCK = 0xff14;
     public static final int PAUSE = 0xff13;
     public static final int NUM_LOCK = 0xff7f;
+    public static final int ISO_LEVEL3_SHIFT = 0xfe03; // AltGr
 
     public static int f(int n) {
         return F1 + (n - 1);

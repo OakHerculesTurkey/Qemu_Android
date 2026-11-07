@@ -41,12 +41,15 @@ public final class RfbClient implements Closeable {
     private static final int ENC_RAW = 0;
     private static final int ENC_COPYRECT = 1;
     private static final int ENC_DESKTOP_SIZE = -223;
+    /** QEMU extension: client may send raw PC scancodes (layout independent). */
+    private static final int ENC_QEMU_EXT_KEY = -258;
 
     private final DataInputStream in;
     private final DataOutputStream out;
     private final Closeable transport;
     private final Listener listener;
     private volatile boolean closed;
+    private volatile boolean extendedKeys;
 
     private int width;
     private int height;
@@ -143,7 +146,7 @@ public final class RfbClient implements Closeable {
             out.writeByte(0);
             out.write(new byte[3]);
             // SetEncodings
-            int[] enc = {ENC_COPYRECT, ENC_RAW, ENC_DESKTOP_SIZE};
+            int[] enc = {ENC_COPYRECT, ENC_RAW, ENC_DESKTOP_SIZE, ENC_QEMU_EXT_KEY};
             out.writeByte(2);
             out.writeByte(0);
             out.writeShort(enc.length);
@@ -181,6 +184,7 @@ public final class RfbClient implements Closeable {
                 case ENC_RAW: readRaw(x, y, w, h); break;
                 case ENC_COPYRECT: readCopyRect(x, y, w, h); break;
                 case ENC_DESKTOP_SIZE: resize(w, h); break;
+                case ENC_QEMU_EXT_KEY: extendedKeys = true; break;
                 default: throw new IOException("Unsupported encoding " + enc);
             }
         }
@@ -259,6 +263,34 @@ public final class RfbClient implements Closeable {
             }
         } catch (IOException ignored) {
             // the reader thread notices the broken connection
+        }
+    }
+
+    /** Whether the server accepted QEMU extended key events (raw scancodes). */
+    public boolean hasExtendedKeys() {
+        return extendedKeys;
+    }
+
+    /**
+     * Key event by physical PC scancode ("qnum": XT set 1, extended = 0x80|code)
+     * when the server supports it, otherwise by keysym.
+     */
+    public void sendScancode(int keysym, int qnum, boolean down) {
+        if (closed) return;
+        if (!extendedKeys || qnum == 0) {
+            sendKey(keysym, down);
+            return;
+        }
+        try {
+            synchronized (out) {
+                out.writeByte(255);       // QEMU client message
+                out.writeByte(0);         // extended key event
+                out.writeShort(down ? 1 : 0);
+                out.writeInt(keysym);
+                out.writeInt(qnum);
+                out.flush();
+            }
+        } catch (IOException ignored) {
         }
     }
 

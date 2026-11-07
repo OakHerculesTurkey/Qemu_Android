@@ -94,6 +94,7 @@ final class Ui {
         t.setText(title);
         t.setTextSize(20);
         t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTextColor(a.getColor(R.color.text_primary));
         t.setSingleLine(true);
         bar.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         for (View v : actions) bar.addView(v);
@@ -104,6 +105,7 @@ final class Ui {
         Button b = new Button(c, null, android.R.attr.borderlessButtonStyle);
         b.setText(text);
         b.setAllCaps(false);
+        b.setTextColor(c.getColor(R.color.text_primary));
         b.setOnClickListener(l);
         return b;
     }
@@ -160,5 +162,41 @@ final class Ui {
         hs.setHorizontalScrollBarEnabled(false);
         hs.addView(row);
         return hs;
+    }
+
+    /** Small rounded label. */
+    static TextView chip(Context c, String text, int fg, int bg) {
+        TextView t = new TextView(c);
+        t.setText(text);
+        t.setTextSize(12);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTextColor(fg);
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(bg);
+        d.setCornerRadius(dp(c, 10));
+        t.setBackground(d);
+        t.setPadding(dp(c, 8), dp(c, 3), dp(c, 8), dp(c, 3));
+        return t;
+    }
+
+    /** Compact filled button with an icon, for list rows. */
+    static Button pill(Context c, String text, int icon, int color, View.OnClickListener l) {
+        Button b = primary(c, text, l);
+        ((GradientDrawable) b.getBackground()).setColor(color);
+        b.setTextSize(14);
+        if (icon != 0) {
+            android.graphics.drawable.Drawable d = c.getDrawable(icon).mutate();
+            d.setTint(Color.WHITE);
+            int s = dp(c, 18);
+            d.setBounds(0, 0, s, s);
+            b.setCompoundDrawables(d, null, null, null);
+            b.setCompoundDrawablePadding(dp(c, 6));
+        }
+        b.setMinHeight(0);
+        b.setMinimumHeight(dp(c, 40));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, dp(c, 40));
+        lp.leftMargin = dp(c, 8);
+        b.setLayoutParams(lp);
+        return b;
     }
 }

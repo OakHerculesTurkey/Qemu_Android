@@ -133,6 +133,10 @@ public final class CommandBuilder {
             }
             a.add("-vnc");
             a.add("unix:" + p.vncSocket().getAbsolutePath());
+            if (c.keymap != null && !c.keymap.isEmpty() && !"en-us".equals(c.keymap)) {
+                a.add("-k");
+                a.add(c.keymap);
+            }
         } else {
             a.add("-display");
             a.add("none");

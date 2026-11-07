@@ -51,7 +51,8 @@ public class EditVmActivity extends Activity {
 
     private EditText name, machine, cpu, smp, mem, disk, cdrom, kernel, initrd, append, hostfwd,
             tbSize, extra;
-    private Spinner arch, firmware, diskIf, bootFrom, display, gpu, input, network, nic, accel, tcgThread;
+    private Spinner arch, firmware, diskIf, bootFrom, display, gpu, input, keymap, network, nic, accel,
+            tcgThread;
     private CheckBox usbInput;
     private boolean archInit;
 
@@ -70,6 +71,8 @@ public class EditVmActivity extends Activity {
     private static final String[] GPU_X86_V = {"std", "cirrus-vga", "virtio-vga", "none"};
     private static final String[] GPU_X86_L = {"Standart VGA (uyumlu)",
             "Cirrus (Windows XP/2000/98 sürücüsü dahili)", "virtio-vga", "Yok"};
+    private static final String[] KEYMAP_V = {"en-us", "tr"};
+    private static final String[] KEYMAP_L = {"İngilizce (ABD)", "Türkçe Q"};
     private static final String[] INPUT_ARM_V = {"xhci"};
     private static final String[] INPUT_ARM_L = {"USB 3 klavye + tablet"};
     private static final String[] INPUT_X86_V = {"xhci", "legacy", "ps2"};
@@ -180,6 +183,9 @@ public class EditVmActivity extends Activity {
                 cfg.isAarch64() ? INPUT_ARM_L : INPUT_X86_L, cfg.input);
         note("Tablet = mutlak fare: dokunduğunuz yere tıklar. Windows 7 ve öncesinde USB 3 "
                 + "sürücüsü yoktur; onlar için PS/2 + USB 1.1 seçin.");
+        keymap = spinner("Misafirin klavye düzeni", KEYMAP_V, KEYMAP_L, cfg.keymap);
+        note("Misafir işletim sisteminde seçili düzenle aynı olmalı. Ekrandaki PC klavyesi gerçek "
+                + "tuş kodu gönderir; bu ayar Android klavyesiyle yazılan metni ve tuş etiketlerini etkiler.");
         usbInput = new CheckBox(this);
         usbInput.setText("Klavye/fare aygıtlarını ekle (ekranlı kullanım için gerekli)");
         usbInput.setChecked(cfg.usbInput);
@@ -344,6 +350,7 @@ public class EditVmActivity extends Activity {
         c.gpu = value(gpu);
         c.usbInput = usbInput.isChecked();
         c.input = value(input);
+        c.keymap = value(keymap);
         c.network = value(network);
         c.nic = value(nic);
         c.hostfwd = hostfwd.getText().toString().replace(" ", "");

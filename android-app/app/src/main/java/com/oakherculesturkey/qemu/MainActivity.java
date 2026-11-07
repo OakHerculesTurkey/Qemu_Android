@@ -40,15 +40,23 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        Button add = Ui.button(this, "+ Yeni", v -> chooseTemplate());
-        Button more = Ui.button(this, "⋮", this::showMenu);
-        root.addView(Ui.topBar(this, "QEMU", add, more));
+        Button add = Ui.pill(this, "Yeni", R.drawable.ic_add, Ui.ACCENT, v -> chooseTemplate());
+        android.widget.ImageButton more = new android.widget.ImageButton(this, null,
+                android.R.attr.borderlessButtonStyle);
+        more.setImageResource(R.drawable.ic_more);
+        more.setColorFilter(getColor(R.color.text_primary));
+        more.setContentDescription("Menü");
+        more.setOnClickListener(this::showMenu);
+        more.setLayoutParams(new LinearLayout.LayoutParams(Ui.dp(this, 48), Ui.dp(this, 48)));
+        LinearLayout bar = Ui.topBar(this, "QEMU", add, more);
+        bar.setPadding(Ui.dp(this, 20), Ui.dp(this, 12), Ui.dp(this, 6), Ui.dp(this, 4));
+        root.addView(bar);
 
         ScrollView sv = new ScrollView(this);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 12);
-        list.setPadding(p, 0, p, p);
+        int p = Ui.dp(this, 14);
+        list.setPadding(p, 0, p, p * 2);
         sv.addView(list);
         root.addView(sv, new LinearLayout.LayoutParams(-1, 0, 1));
         Ui.applyInsets(root);
@@ -117,56 +125,83 @@ public class MainActivity extends Activity {
 
     private View row(VmConfig vm) {
         boolean running = VmService.isRunning(vm.id);
+        boolean vncDisplay = "vnc".equals(vm.display);
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        int p = Ui.dp(this, 14);
-        card.setPadding(p, p, p, Ui.dp(this, 6));
+        int p = Ui.dp(this, 16);
+        card.setPadding(p, p, Ui.dp(this, 8), Ui.dp(this, 10));
         GradientDrawable bg = new GradientDrawable();
-        bg.setCornerRadius(Ui.dp(this, 14));
-        bg.setColor(0x143D7BF7);
-        bg.setStroke(Ui.dp(this, 1), running ? 0xFF2EAA5C : 0x333D7BF7);
+        bg.setCornerRadius(Ui.dp(this, 18));
+        bg.setColor(getColor(R.color.card_bg));
+        bg.setStroke(Ui.dp(this, running ? 2 : 1), running ? getColor(R.color.running) : getColor(R.color.card_stroke));
         card.setBackground(bg);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.topMargin = Ui.dp(this, 10);
+        lp.topMargin = Ui.dp(this, 12);
         card.setLayoutParams(lp);
 
+        // header: arch badge, name, status
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        boolean arm = vm.isAarch64();
+        TextView badge = Ui.chip(this, arm ? "ARM64" : "x86", 0xFFFFFFFF, arm ? 0xFF2F8F6A : 0xFF7A5AF8);
+        head.addView(badge);
         TextView title = new TextView(this);
-        title.setText((running ? "● " : "") + vm.name);
+        title.setText(vm.name);
         title.setTextSize(18);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        if (running) title.setTextColor(0xFF2EAA5C);
-        card.addView(title);
+        title.setTextColor(getColor(R.color.text_primary));
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        title.setPadding(Ui.dp(this, 10), 0, Ui.dp(this, 6), 0);
+        head.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        if (running) head.addView(Ui.chip(this, "● Çalışıyor", 0xFFFFFFFF, getColor(R.color.running)));
+        card.addView(head);
 
         TextView sub = new TextView(this);
-        String media = !vm.cdrom.isEmpty() ? "ISO: " + new File(vm.cdrom).getName()
-                : !vm.disk.isEmpty() ? "Disk: " + new File(vm.disk).getName()
-                : !vm.kernel.isEmpty() ? "Kernel: " + new File(vm.kernel).getName() : "medya yok";
-        sub.setText((vm.isAarch64() ? "ARM64" : "x86_64") + " · " + vm.smp + " çekirdek · "
-                + vm.memMb + " MB · " + ("vnc".equals(vm.display) ? "ekran" : "konsol") + "\n" + media);
+        String media = !vm.cdrom.isEmpty() ? "ISO · " + new File(vm.cdrom).getName()
+                : !vm.disk.isEmpty() ? "Disk · " + new File(vm.disk).getName()
+                : !vm.kernel.isEmpty() ? "Kernel: " + new File(vm.kernel).getName() : "Medya seçilmedi";
+        sub.setText(vm.smp + " çekirdek · " + memText(vm.memMb) + " · "
+                + (vncDisplay ? "ekran" : "seri konsol") + "\n" + media);
         sub.setTextSize(13);
-        sub.setAlpha(0.75f);
+        sub.setTextColor(getColor(R.color.text_secondary));
+        sub.setPadding(0, Ui.dp(this, 8), 0, Ui.dp(this, 4));
+        sub.setLineSpacing(0, 1.15f);
         card.addView(sub);
 
         LinearLayout actions = new LinearLayout(this);
-        actions.setGravity(Gravity.END);
+        actions.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
         if (running) {
-            actions.addView(Ui.button(this, "Durdur", v -> confirmStop(vm)));
-            if ("vnc".equals(vm.display)) {
-                actions.addView(Ui.button(this, "Ekran", v -> DisplayActivity.open(this, vm.id)));
-            }
-            actions.addView(Ui.button(this, "Konsol", v ->
+            actions.addView(Ui.pill(this, "Durdur", R.drawable.ic_stop, 0xFFD14343, v -> confirmStop(vm)));
+            actions.addView(Ui.pill(this, "Konsol", R.drawable.ic_terminal, 0xFF4A5160, v ->
                     ConsoleActivity.open(this, vm.id, ConsoleActivity.TAB_SERIAL)));
+            if (vncDisplay) {
+                actions.addView(Ui.pill(this, "Ekran", R.drawable.ic_monitor, Ui.ACCENT, v ->
+                        DisplayActivity.open(this, vm.id)));
+            }
         } else {
-            actions.addView(Ui.button(this, "▶ Başlat", v -> startVm(vm)));
+            actions.addView(Ui.pill(this, "Başlat", R.drawable.ic_play, Ui.ACCENT, v -> startVm(vm)));
         }
-        actions.addView(Ui.button(this, "⋮", v -> vmMenu(v, vm)));
-        card.addView(actions);
+        android.widget.ImageButton more = new android.widget.ImageButton(this, null,
+                android.R.attr.borderlessButtonStyle);
+        more.setImageResource(R.drawable.ic_more);
+        more.setColorFilter(getColor(R.color.text_secondary));
+        more.setContentDescription("Diğer");
+        more.setOnClickListener(v -> vmMenu(v, vm));
+        actions.addView(more, new LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)));
+        LinearLayout.LayoutParams al = new LinearLayout.LayoutParams(-1, -2);
+        al.topMargin = Ui.dp(this, 6);
+        card.addView(actions, al);
         card.setOnClickListener(v -> {
             if (!running) EditVmActivity.openEdit(this, vm.id);
-            else if ("vnc".equals(vm.display)) DisplayActivity.open(this, vm.id);
+            else if (vncDisplay) DisplayActivity.open(this, vm.id);
             else ConsoleActivity.open(this, vm.id, ConsoleActivity.TAB_SERIAL);
         });
         return card;
+    }
+
+    private static String memText(int mb) {
+        return mb >= 1024 && mb % 1024 == 0 ? (mb / 1024) + " GB RAM" : mb + " MB RAM";
     }
 
     private void startVm(VmConfig vm) {

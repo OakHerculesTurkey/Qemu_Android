@@ -16,7 +16,8 @@ if [ "${QEMU_PRUNE_BLOBS:-1}" = 1 ]; then
     rm -f -- *riscv* *loongarch* openbios-* slof.bin skiboot.lid vof*.bin \
              s390-* hppa-firmware* palcode-* u-boot* opensbi-* npcm*.bin \
              qemu_vga.ndrv canyonlands.dtb bamboo.dtb petalogix-*.dtb \
-             pnv-*.dtb edk2-arm-code.fd )
+             pnv-*.dtb edk2-arm-code.fd &&
+    rm -rf dtb )  # PowerPC/MicroBlaze device trees (QEMU 11 keeps them in dtb/)
 fi
 
 cp "$REPO_ROOT/android/qemu-env.sh" "$STAGE/"

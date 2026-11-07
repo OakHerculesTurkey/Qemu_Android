@@ -70,6 +70,8 @@ final class Env {
                 out.mkdirs();
                 copyAssetDir(am, child, out);
             } else {
+                File parent = out.getParentFile();
+                if (parent != null) parent.mkdirs();
                 try (InputStream in = am.open(child); OutputStream os = new FileOutputStream(out)) {
                     Files.copy(in, os, null);
                 }

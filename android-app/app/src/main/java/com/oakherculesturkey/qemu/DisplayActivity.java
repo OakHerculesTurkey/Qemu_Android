@@ -3,9 +3,14 @@ package com.oakherculesturkey.qemu;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -15,35 +20,56 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 
-import com.oakherculesturkey.qemu.core.Keysyms;
+import com.oakherculesturkey.qemu.core.KeyLayouts;
+import com.oakherculesturkey.qemu.core.Modifiers;
 import com.oakherculesturkey.qemu.core.QmpClient;
 import com.oakherculesturkey.qemu.core.RfbClient;
 import com.oakherculesturkey.qemu.core.VmConfig;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
-/** Full-screen guest display (VNC over a private unix socket) with a key/tool bar. */
+/**
+ * Guest display: VNC view, a top bar, a quick-key row and a full on-screen
+ * PC keyboard (keys Android keyboards lack: Esc, F1-F12, Ctrl/Alt/Win,
+ * Ins/Home/End/PgUp/PgDn, shortcuts, mouse buttons).
+ * Portrait: screen above, keyboard below. Landscape: keyboard over the screen.
+ */
 public class DisplayActivity extends Activity {
     static final String EXTRA_ID = "id";
 
+    private static final int BAR_BG = 0xFF15181D;
+    private static final int PAGE_MAIN = 0, PAGE_NAV = 1;
+
     private String id;
     private VmConfig config;
+    private SharedPreferences prefs;
+
+    private FrameLayout root;
+    private LinearLayout column;
+    private FrameLayout screen;
     private VncView vnc;
-    private TextView status;
-    private LinearLayout toolbar;
+    private TextView status, zoomBadge;
+    private LinearLayout topBar;
+    private PcKeyboardView quickKeys;
+    private LinearLayout kbdPanel;
+    private PcKeyboardView keyboard;
+    private Button pageMainB, pageNavB, layoutB;
+    private ImageButton mouseB, showControlsB;
+
+    private final Modifiers mods = new Modifiers();
+    private boolean controlsVisible = true;
+    private boolean keyboardOpen;
+    private int page = PAGE_MAIN;
+    private boolean turkishLabels;
+
     private volatile boolean active;
     private Thread connector;
     private volatile RfbClient client;
-
-    private boolean ctrl, alt, win, shift;
-    private Button ctrlB, altB, winB, shiftB, mouseB;
-
     private final Runnable vmListener = this::checkVm;
 
     public static void open(Context c, String id) {
@@ -59,130 +85,313 @@ public class DisplayActivity extends Activity {
             finish();
             return;
         }
+        prefs = getSharedPreferences("display", MODE_PRIVATE);
+        turkishLabels = prefs.getBoolean("tr_" + id, "tr".equals(config.keymap));
+        keyboardOpen = prefs.getBoolean("kbd_open", false);
+        page = prefs.getInt("kbd_page", PAGE_MAIN);
+
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        mods.setSink((sym, qnum, down) -> {
+            RfbClient c = client;
+            if (c != null) c.sendScancode(sym, qnum, down);
+        });
 
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.BLACK);
         vnc = new VncView(this);
-        vnc.setModifierSource(this::takeModifiers);
-        root.addView(vnc, new FrameLayout.LayoutParams(-1, -1));
+        vnc.setModifiers(mods);
+        vnc.setTouchpad(prefs.getBoolean("touchpad", false));
+        vnc.setListener(z -> updateZoomBadge());
 
         status = new TextView(this);
-        status.setTextColor(Color.LTGRAY);
+        status.setTextColor(0xFFB8C0CC);
         status.setTextSize(15);
         status.setGravity(Gravity.CENTER);
+        int p = Ui.dp(this, 24);
+        status.setPadding(p, p, p, p);
         status.setText("Bağlanıyor…");
-        root.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
 
-        LinearLayout overlay = new LinearLayout(this);
-        overlay.setOrientation(LinearLayout.VERTICAL);
-        toolbar = buildToolbar();
-        overlay.addView(toolbar);
-        root.addView(overlay, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
+        zoomBadge = new TextView(this);
+        zoomBadge.setTextColor(Color.WHITE);
+        zoomBadge.setTextSize(12);
+        zoomBadge.setPadding(Ui.dp(this, 10), Ui.dp(this, 4), Ui.dp(this, 10), Ui.dp(this, 4));
+        zoomBadge.setBackground(pill(0xAA000000));
+        zoomBadge.setOnClickListener(v -> vnc.resetZoom());
+        zoomBadge.setVisibility(View.GONE);
 
-        Button toggle = Ui.key(this, "☰", v -> toolbar.setVisibility(
-                toolbar.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
-        FrameLayout.LayoutParams tl = new FrameLayout.LayoutParams(-2, Ui.dp(this, 38),
+        screen = new FrameLayout(this);
+        screen.setBackgroundColor(Color.BLACK);
+        screen.addView(vnc, new FrameLayout.LayoutParams(-1, -1));
+        screen.addView(status, new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
+        FrameLayout.LayoutParams zl = new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        zl.topMargin = Ui.dp(this, 8);
+        screen.addView(zoomBadge, zl);
+
+        topBar = buildTopBar();
+
+        quickKeys = new PcKeyboardView(this);
+        quickKeys.setup(mods, keyCallbacks);
+        quickKeys.setRows(KeyLayouts.quick());
+
+        kbdPanel = buildKeyboardPanel();
+
+        column = new LinearLayout(this);
+        column.setOrientation(LinearLayout.VERTICAL);
+        column.setBackgroundColor(BAR_BG);
+
+        showControlsB = iconButton(R.drawable.ic_expand_more, "Kontrolleri göster", v -> setControlsVisible(true));
+        showControlsB.setBackground(pill(0x99000000));
+
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+        root.addView(column, new FrameLayout.LayoutParams(-1, -1));
+        FrameLayout.LayoutParams sl = new FrameLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44),
                 Gravity.TOP | Gravity.END);
-        tl.setMargins(0, Ui.dp(this, 6), Ui.dp(this, 6), 0);
-        root.addView(toggle, tl);
+        sl.setMargins(0, Ui.dp(this, 8), Ui.dp(this, 8), 0);
+        root.addView(showControlsB, sl);
 
-        Ui.applyInsets(overlay);
-        // Keep the top-right toggle clear of the status bar / cutout
-        toggle.setOnApplyWindowInsetsListener((v, ins) -> {
-            int top = Build.VERSION.SDK_INT >= 30
-                    ? ins.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout()).top
-                    : ins.getSystemWindowInsetTop();
-            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) v.getLayoutParams();
-            int want = top + Ui.dp(this, 6);
-            if (lp.topMargin != want) {
-                lp.topMargin = want;
-                v.setLayoutParams(lp);
-            }
-            return ins;
-        });
+        arrange();
+        Ui.applyInsets(column);
         setContentView(root);
         hideSystemBars();
     }
 
-    private void hideSystemBars() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            WindowInsetsController c = getWindow().getInsetsController();
-            if (c != null) {
-                c.hide(WindowInsets.Type.systemBars());
-                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        }
+    // ---- Layout ----------------------------------------------------------------
+
+    private boolean landscape() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
     }
 
-    private LinearLayout buildToolbar() {
-        List<View> keys = new ArrayList<>();
-        keys.add(Ui.key(this, "⌨", v -> toggleKeyboard()));
-        mouseB = Ui.key(this, "Dokunma", v -> {
-            vnc.setTouchpad(!vnc.isTouchpad());
-            mouseB.setText(vnc.isTouchpad() ? "Touchpad" : "Dokunma");
-        });
-        keys.add(mouseB);
-        keys.add(Ui.key(this, "Esc", v -> vnc.tap(Keysyms.ESCAPE)));
-        keys.add(Ui.key(this, "Tab", v -> vnc.tap(Keysyms.TAB)));
-        ctrlB = Ui.key(this, "Ctrl", v -> { ctrl = !ctrl; refreshMods(); });
-        altB = Ui.key(this, "Alt", v -> { alt = !alt; refreshMods(); });
-        shiftB = Ui.key(this, "Shift", v -> { shift = !shift; refreshMods(); });
-        winB = Ui.key(this, "Win", v -> { win = !win; refreshMods(); });
-        keys.add(ctrlB);
-        keys.add(altB);
-        keys.add(shiftB);
-        keys.add(winB);
-        keys.add(Ui.key(this, "←", v -> vnc.tap(Keysyms.LEFT)));
-        keys.add(Ui.key(this, "↑", v -> vnc.tap(Keysyms.UP)));
-        keys.add(Ui.key(this, "↓", v -> vnc.tap(Keysyms.DOWN)));
-        keys.add(Ui.key(this, "→", v -> vnc.tap(Keysyms.RIGHT)));
-        keys.add(Ui.key(this, "F…", this::showFKeys));
-        keys.add(Ui.key(this, "Ctrl+Alt+Del", v ->
-                vnc.tapCombo(Keysyms.DELETE, Keysyms.CONTROL_L, Keysyms.ALT_L)));
-        keys.add(Ui.key(this, "Konsol", v -> ConsoleActivity.open(this, id, ConsoleActivity.TAB_SERIAL)));
-        keys.add(Ui.key(this, "Monitör", v -> ConsoleActivity.open(this, id, ConsoleActivity.TAB_MONITOR)));
-        keys.add(Ui.key(this, "Log", v -> ConsoleActivity.open(this, id, ConsoleActivity.TAB_LOG)));
-        keys.add(Ui.key(this, "Güç…", this::showPower));
+    /** (Re)places the views for the current orientation and visibility state. */
+    private void arrange() {
+        detach(topBar);
+        detach(screen);
+        detach(quickKeys);
+        detach(kbdPanel);
+        column.removeAllViews();
 
+        boolean land = landscape();
+        float heightDp = getResources().getConfiguration().screenHeightDp;
+        float row = land ? Math.max(28, Math.min(34, heightDp * 0.075f))
+                : Math.max(36, Math.min(46, heightDp * 0.055f));
+        keyboard.setRowHeight(Ui.dp(this, row));
+        quickKeys.setRowHeight(Ui.dp(this, land ? 34 : 42));
+
+        // Landscape with the keyboard open: no top bar, every pixel goes to
+        // the screen and the keys (the keyboard has its own close button).
+        if (controlsVisible && !(land && keyboardOpen)) column.addView(topBar);
+        column.addView(screen, new LinearLayout.LayoutParams(-1, 0, 1));
+        if (controlsVisible) {
+            if (keyboardOpen) column.addView(kbdPanel);
+            else column.addView(quickKeys);
+        }
+        showControlsB.setVisibility(controlsVisible ? View.GONE : View.VISIBLE);
+        refreshPageButtons();
+    }
+
+    private static void detach(View v) {
+        if (v != null && v.getParent() instanceof ViewGroup) ((ViewGroup) v.getParent()).removeView(v);
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration c) {
+        super.onConfigurationChanged(c);
+        arrange();
+        hideSystemBars();
+    }
+
+    private void setControlsVisible(boolean v) {
+        controlsVisible = v;
+        arrange();
+    }
+
+    private void setKeyboardOpen(boolean open) {
+        keyboardOpen = open;
+        prefs.edit().putBoolean("kbd_open", open).apply();
+        if (open) hideImeKeyboard();
+        arrange();
+    }
+
+    private LinearLayout buildTopBar() {
         LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.VERTICAL);
-        bar.setBackgroundColor(0x99000000);
-        int p = Ui.dp(this, 2);
-        bar.setPadding(p, p, p, p);
-        bar.addView(Ui.keyRow(this, keys.toArray(new View[0])));
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(BAR_BG);
+        bar.setPadding(Ui.dp(this, 2), 0, Ui.dp(this, 2), 0);
+
+        bar.addView(iconButton(R.drawable.ic_back, "Geri", v -> finish()));
+        TextView title = new TextView(this);
+        title.setText(config.name);
+        title.setTextColor(0xFFF2F4F7);
+        title.setTextSize(16);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+
+        bar.addView(iconButton(R.drawable.ic_keyboard, "PC klavyesi", v -> setKeyboardOpen(!keyboardOpen)));
+        mouseB = iconButton(vnc.isTouchpad() ? R.drawable.ic_mouse : R.drawable.ic_touch,
+                "Fare modu", v -> toggleMouseMode());
+        bar.addView(mouseB);
+        bar.addView(iconButton(R.drawable.ic_fit, "Ekrana sığdır", v -> vnc.resetZoom()));
+        bar.addView(iconButton(R.drawable.ic_power, "Güç", this::showPower));
+        bar.addView(iconButton(R.drawable.ic_more, "Diğer", this::showMore));
+        bar.addView(iconButton(R.drawable.ic_expand_less, "Kontrolleri gizle", v -> setControlsVisible(false)));
+        bar.setLayoutParams(new LinearLayout.LayoutParams(-1, Ui.dp(this, 48)));
         return bar;
     }
 
-    private void refreshMods() {
-        ctrlB.setBackground(Ui.keyBackground(this, ctrl));
-        altB.setBackground(Ui.keyBackground(this, alt));
-        shiftB.setBackground(Ui.keyBackground(this, shift));
-        winB.setBackground(Ui.keyBackground(this, win));
+    private LinearLayout buildKeyboardPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(0xFF0F1114);
+
+        LinearLayout tabs = new LinearLayout(this);
+        tabs.setGravity(Gravity.CENTER_VERTICAL);
+        tabs.setPadding(Ui.dp(this, 4), Ui.dp(this, 2), Ui.dp(this, 4), 0);
+        pageMainB = tab("Klavye", v -> setPage(PAGE_MAIN));
+        pageNavB = tab("Gezinme · Kısayol · Fare", v -> setPage(PAGE_NAV));
+        tabs.addView(pageMainB);
+        tabs.addView(pageNavB);
+        View spacer = new View(this);
+        tabs.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+        layoutB = tab(turkishLabels ? "TR" : "US", v -> {
+            turkishLabels = !turkishLabels;
+            prefs.edit().putBoolean("tr_" + id, turkishLabels).apply();
+            layoutB.setText(turkishLabels ? "TR" : "US");
+            setPage(page);
+            Ui.toast(this, "Tuş etiketleri: " + (turkishLabels ? "Türkçe Q" : "İngilizce (ABD)")
+                    + ". Çıkan karakteri misafirin klavye düzeni belirler.");
+        });
+        tabs.addView(layoutB);
+        ImageButton ime = iconButton(R.drawable.ic_keyboard, "Android klavyesi (metin yazmak için)", v -> toggleImeKeyboard());
+        ImageButton close = iconButton(R.drawable.ic_expand_more, "Klavyeyi kapat", v -> setKeyboardOpen(false));
+        int small = Ui.dp(this, 36);
+        ime.setLayoutParams(new LinearLayout.LayoutParams(small, small));
+        close.setLayoutParams(new LinearLayout.LayoutParams(small, small));
+        tabs.addView(ime);
+        tabs.addView(close);
+        panel.addView(tabs);
+
+        keyboard = new PcKeyboardView(this);
+        keyboard.setup(mods, keyCallbacks);
+        panel.addView(keyboard);
+        setPage(page);
+        return panel;
     }
 
-    /** One-shot modifiers: consumed by the next key. */
-    private int[] takeModifiers() {
-        List<Integer> m = new ArrayList<>();
-        if (ctrl) m.add(Keysyms.CONTROL_L);
-        if (alt) m.add(Keysyms.ALT_L);
-        if (shift) m.add(Keysyms.SHIFT_L);
-        if (win) m.add(Keysyms.SUPER_L);
-        int[] r = new int[m.size()];
-        for (int i = 0; i < r.length; i++) r[i] = m.get(i);
-        if (r.length > 0) {
-            ctrl = alt = shift = win = false;
-            runOnUiThread(this::refreshMods);
+    private void setPage(int p) {
+        page = p;
+        prefs.edit().putInt("kbd_page", p).apply();
+        keyboard.setRows(p == PAGE_NAV ? KeyLayouts.nav() : KeyLayouts.full(turkishLabels));
+        refreshPageButtons();
+    }
+
+    private void refreshPageButtons() {
+        if (pageMainB == null) return;
+        pageMainB.setTextColor(page == PAGE_MAIN ? Color.WHITE : 0xFF8A93A0);
+        pageNavB.setTextColor(page == PAGE_NAV ? Color.WHITE : 0xFF8A93A0);
+        pageMainB.setBackground(page == PAGE_MAIN ? pill(0xFF2B3038) : null);
+        pageNavB.setBackground(page == PAGE_NAV ? pill(0xFF2B3038) : null);
+    }
+
+    private Button tab(String text, View.OnClickListener l) {
+        Button b = new Button(this, null, android.R.attr.borderlessButtonStyle);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTextColor(0xFF8A93A0);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        b.setMinHeight(0);
+        b.setMinimumHeight(Ui.dp(this, 32));
+        b.setPadding(Ui.dp(this, 12), 0, Ui.dp(this, 12), 0);
+        b.setOnClickListener(l);
+        return b;
+    }
+
+    private ImageButton iconButton(int icon, String desc, View.OnClickListener l) {
+        ImageButton b = new ImageButton(this, null, android.R.attr.borderlessButtonStyle);
+        b.setImageResource(icon);
+        b.setContentDescription(desc);
+        b.setTooltipText(desc);
+        b.setOnClickListener(l);
+        int s = Ui.dp(this, 44);
+        b.setLayoutParams(new LinearLayout.LayoutParams(s, s));
+        b.setScaleType(android.widget.ImageView.ScaleType.CENTER);
+        return b;
+    }
+
+    private GradientDrawable pill(int color) {
+        GradientDrawable d = new GradientDrawable();
+        d.setColor(color);
+        d.setCornerRadius(Ui.dp(this, 18));
+        return d;
+    }
+
+    private void updateZoomBadge() {
+        float z = vnc.getZoom();
+        if (z <= 1.01f) {
+            zoomBadge.setVisibility(View.GONE);
+        } else {
+            zoomBadge.setText(String.format(java.util.Locale.ROOT, "%.1f×  ·  sığdırmak için dokun", z));
+            zoomBadge.setVisibility(View.VISIBLE);
         }
-        return r;
     }
 
-    private void toggleKeyboard() {
+    private void toggleMouseMode() {
+        boolean tp = !vnc.isTouchpad();
+        vnc.setTouchpad(tp);
+        prefs.edit().putBoolean("touchpad", tp).apply();
+        mouseB.setImageResource(tp ? R.drawable.ic_mouse : R.drawable.ic_touch);
+        Ui.toast(this, tp ? "Touchpad modu: parmakla imleci sürükleyin, dokunarak tıklayın"
+                : "Dokunma modu: dokunduğunuz yere tıklanır");
+    }
+
+    // ---- On-screen key handling ---------------------------------------------
+
+    private final PcKeyboardView.Callbacks keyCallbacks = new PcKeyboardView.Callbacks() {
+        @Override
+        public void onKey(KeyLayouts.Key k, boolean down) {
+            vnc.scancode(k.keysym, k.qnum, down);
+        }
+
+        @Override
+        public void onCombo(KeyLayouts.Key k) {
+            RfbClient c = client;
+            if (c == null) return;
+            for (int m : k.comboMods) c.sendScancode(Modifiers.SYMS[m], Modifiers.QNUMS[m], true);
+            c.sendScancode(k.keysym, k.qnum, true);
+            c.sendScancode(k.keysym, k.qnum, false);
+            for (int i = k.comboMods.length - 1; i >= 0; i--) {
+                int m = k.comboMods[i];
+                if (!mods.active(m)) c.sendScancode(Modifiers.SYMS[m], Modifiers.QNUMS[m], false);
+            }
+        }
+
+        @Override
+        public void onMouse(KeyLayouts.Key k, boolean down) {
+            if (k.arg == KeyLayouts.MOUSE_WHEEL_UP) {
+                if (down) vnc.wheel(1);
+            } else if (k.arg == KeyLayouts.MOUSE_WHEEL_DOWN) {
+                if (down) vnc.wheel(-1);
+            } else {
+                vnc.mouseButton(k.arg, down);
+            }
+        }
+
+        @Override
+        public void onAction(KeyLayouts.Key k) {
+            if (k.arg == KeyLayouts.ACTION_ANDROID_IME) toggleImeKeyboard();
+        }
+    };
+
+    private void hideImeKeyboard() {
+        InputMethodManager imm = getSystemService(InputMethodManager.class);
+        imm.hideSoftInputFromWindow(vnc.getWindowToken(), 0);
+    }
+
+    /** Android's own keyboard, for typing text (accents, emoji, dictation). */
+    private void toggleImeKeyboard() {
         vnc.requestFocus();
         InputMethodManager imm = getSystemService(InputMethodManager.class);
         if (Build.VERSION.SDK_INT >= 30) {
@@ -191,6 +400,10 @@ public class DisplayActivity extends Activity {
             if (visible) {
                 imm.hideSoftInputFromWindow(vnc.getWindowToken(), 0);
             } else {
+                if (keyboardOpen) {
+                    keyboardOpen = false;
+                    arrange();
+                }
                 WindowInsetsController c = getWindow().getInsetsController();
                 if (c != null) c.show(WindowInsets.Type.ime());
                 imm.showSoftInput(vnc, InputMethodManager.SHOW_IMPLICIT);
@@ -201,24 +414,7 @@ public class DisplayActivity extends Activity {
         }
     }
 
-    private void showFKeys(View anchor) {
-        PopupMenu pm = new PopupMenu(this, anchor);
-        for (int i = 1; i <= 12; i++) pm.getMenu().add(0, i, i, "F" + i);
-        pm.getMenu().add(0, 100, 100, "Alt+F4");
-        pm.getMenu().add(0, 101, 101, "Ctrl+Alt+F1");
-        pm.getMenu().add(0, 102, 102, "Ctrl+Alt+F2");
-        pm.getMenu().add(0, 103, 103, "Print Screen");
-        pm.setOnMenuItemClickListener(item -> {
-            int i = item.getItemId();
-            if (i <= 12) vnc.tap(Keysyms.f(i));
-            else if (i == 100) vnc.tapCombo(Keysyms.f(4), Keysyms.ALT_L);
-            else if (i == 101) vnc.tapCombo(Keysyms.f(1), Keysyms.CONTROL_L, Keysyms.ALT_L);
-            else if (i == 102) vnc.tapCombo(Keysyms.f(2), Keysyms.CONTROL_L, Keysyms.ALT_L);
-            else if (i == 103) vnc.tap(Keysyms.PRINT);
-            return true;
-        });
-        pm.show();
-    }
+    // ---- Menus ----------------------------------------------------------------
 
     private void showPower(View anchor) {
         PopupMenu pm = new PopupMenu(this, anchor);
@@ -240,6 +436,43 @@ public class DisplayActivity extends Activity {
         pm.show();
     }
 
+    private void showMore(View anchor) {
+        PopupMenu pm = new PopupMenu(this, anchor);
+        pm.getMenu().add(0, 1, 1, "Seri konsol");
+        pm.getMenu().add(0, 2, 2, "QEMU monitörü");
+        pm.getMenu().add(0, 3, 3, "Log");
+        pm.getMenu().add(0, 4, 4, "Değiştirici tuşları bırak");
+        pm.getMenu().add(0, 5, 5, "Nasıl kullanılır?");
+        pm.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1: ConsoleActivity.open(this, id, ConsoleActivity.TAB_SERIAL); break;
+                case 2: ConsoleActivity.open(this, id, ConsoleActivity.TAB_MONITOR); break;
+                case 3: ConsoleActivity.open(this, id, ConsoleActivity.TAB_LOG); break;
+                case 4: mods.reset(true); break;
+                case 5: help(); break;
+            }
+            return true;
+        });
+        pm.show();
+    }
+
+    private void help() {
+        Ui.message(this, "Ekran kontrolleri",
+                "FARE\n"
+                + "• Dokunma modu: dokunduğun yere tıklar; uzun bas = sağ tık; sürükle = sol tuşla sürükle.\n"
+                + "• Touchpad modu: parmakla imleci taşı; dokun = tık; iki parmakla dokun = sağ tık; "
+                + "uzun bas ve sürükle = sürükle.\n"
+                + "• İki parmak: kıstır = yakınlaştır, kaydır = fare tekerleği (yakınken: ekranı kaydır).\n\n"
+                + "KLAVYE\n"
+                + "• Üstteki klavye simgesi PC klavyesini açar: Esc, F1–F12, Ctrl, Alt, Win, Ins, Home, "
+                + "End, PgUp/PgDn, kısayollar ve fare tuşları.\n"
+                + "• Ctrl/Alt/Shift/Win: bir dokunuş = sonraki tuşa uygulanır, iki dokunuş = kilitli, "
+                + "basılı tutup başka tuşa basmak da olur.\n"
+                + "• Tuşlar gerçek PC tuş kodu gönderir; çıkan karakteri misafir işletim sisteminin "
+                + "klavye düzeni belirler (TR/US düğmesi sadece etiketleri değiştirir).\n"
+                + "• Metin yazmak için PC klavyesindeki ⌨ tuşu Android klavyesini açar.");
+    }
+
     private void qmp(String json) {
         new Thread(() -> {
             String msg;
@@ -251,6 +484,28 @@ public class DisplayActivity extends Activity {
             String m = msg;
             runOnUiThread(() -> Ui.toast(this, m));
         }).start();
+    }
+
+    // ---- System bars -------------------------------------------------------
+
+    private void hideSystemBars() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowInsetsController c = getWindow().getInsetsController();
+            if (c != null) {
+                c.hide(WindowInsets.Type.systemBars());
+                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) hideSystemBars();
     }
 
     // ---- Connection --------------------------------------------------------
@@ -268,21 +523,16 @@ public class DisplayActivity extends Activity {
     protected void onStop() {
         active = false;
         VmService.removeListener(vmListener);
+        mods.reset(true);
         RfbClient c = client;
         if (c != null) c.close();
         if (connector != null) connector.interrupt();
         super.onStop();
     }
 
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) hideSystemBars();
-    }
-
     private void checkVm() {
         if (!VmService.isRunning(id)) {
-            setStatus("Sanal makine kapandı.\nAyrıntılar için Log'a bakın.");
+            setStatus("Sanal makine kapandı.\nAyrıntılar için ⋮ → Log.");
         }
     }
 
@@ -319,7 +569,7 @@ public class DisplayActivity extends Activity {
                 if (!active) return;
                 if (!VmService.isRunning(id)) break;
                 setStatus("VNC'ye bağlanılamadı: " + (last != null ? last.getMessage() : "")
-                        + "\nLog'a bakın.");
+                        + "\nAyrıntılar için ⋮ → Log.");
                 return;
             }
             final LocalConn lc = conn;
@@ -355,6 +605,7 @@ public class DisplayActivity extends Activity {
             });
             client = c;
             vnc.setClient(c);
+            mods.reset(false);
             c.run(); // blocks until disconnected
             vnc.setClient(null);
             client = null;
@@ -370,12 +621,5 @@ public class DisplayActivity extends Activity {
         } catch (InterruptedException e) {
             return false;
         }
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        ViewGroup content = findViewById(android.R.id.content);
-        if (content != null) content.removeAllViews();
     }
 }

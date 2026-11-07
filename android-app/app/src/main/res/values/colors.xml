@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="ic_background">#FF1E2A44</color>
+    <color name="text_primary">#FF161A20</color>
+    <color name="text_secondary">#FF5F6875</color>
+    <color name="card_bg">#FFF3F6FC</color>
+    <color name="card_stroke">#FFDCE4F2</color>
+    <color name="running">#FF1F9D55</color>
 </resources>
