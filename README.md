@@ -26,7 +26,10 @@ cihazlar için). PC gerekmez: APK'yı telefona indirip kurmanız yeterli.
 
 * **Sanal makine listesi** — başlat / durdur / düzenle / kopyala / sil, çalışma durumu.
 * **Şablonlar** — Linux ARM64 (UEFI, ekranlı), Linux ARM64 (seri konsol),
-  x86_64 Linux (BIOS), x86_64 Windows (IDE + e1000), x86_64 UEFI, boş.
+  x86_64 Linux (BIOS), Windows 7/Vista (q35, IDE, e1000, PS/2 + USB 1.1 tablet),
+  Windows XP/2000/98 (`pc` makinesi, IDE, Cirrus, RTL8139), x86_64 UEFI, boş.
+* **Klavye/fare** — USB 3 (modern sistemler) veya PS/2 klavye + USB 1.1 tablet
+  (xHCI sürücüsü olmayan Windows 7 ve öncesi) veya sadece PS/2.
 * **Ayarlar** — mimari, makine, CPU, çekirdek, bellek, firmware (UEFI/BIOS/yok),
   disk (+ arayüz: VirtIO/NVMe/IDE/USB), ISO, önyükleme sırası, doğrudan kernel/initrd,
   ekran kartı, ağ (NAT + port yönlendirme, NIC modeli), TCG ayarları, ek QEMU
@@ -64,6 +67,10 @@ diskli VM'ler açar. Telefon olmadan PAC/iş parçacığı hatalarını yakalar.
 
 ### Sorun giderme
 
+* **Windows XP: STOP 0x000000A5 mavi ekranı** — makine `q35` olamaz; `pc` kullanın
+  (XP şablonu bunu kendisi ayarlar).
+* **Windows 7/XP'de fare/klavye çalışmıyor** — "Klavye ve fare" ayarını
+  "PS/2 klavye + USB 1.1 tablet" yapın (bu sürümlerde USB 3 sürücüsü yoktur).
 * **QEMU kod 137 ile kapanıyor** — Android süreci öldürdü (bellek ya da Android 12+
   "phantom process killer"). Geliştirici seçenekleri → *Alt süreç kısıtlamalarını devre
   dışı bırak*'ı açın veya VM belleğini azaltın.

@@ -51,7 +51,7 @@ public class EditVmActivity extends Activity {
 
     private EditText name, machine, cpu, smp, mem, disk, cdrom, kernel, initrd, append, hostfwd,
             tbSize, extra;
-    private Spinner arch, firmware, diskIf, bootFrom, display, gpu, network, nic, accel, tcgThread;
+    private Spinner arch, firmware, diskIf, bootFrom, display, gpu, input, network, nic, accel, tcgThread;
     private CheckBox usbInput;
     private boolean archInit;
 
@@ -67,8 +67,15 @@ public class EditVmActivity extends Activity {
     private static final String[] DISP_L = {"Ekran (dahili VNC)", "Sadece seri konsol"};
     private static final String[] GPU_ARM_V = {"virtio-gpu-pci", "ramfb", "none"};
     private static final String[] GPU_ARM_L = {"virtio-gpu (önerilen)", "ramfb (basit framebuffer)", "Yok"};
-    private static final String[] GPU_X86_V = {"std", "virtio-vga", "none"};
-    private static final String[] GPU_X86_L = {"Standart VGA (uyumlu)", "virtio-vga", "Yok"};
+    private static final String[] GPU_X86_V = {"std", "cirrus-vga", "virtio-vga", "none"};
+    private static final String[] GPU_X86_L = {"Standart VGA (uyumlu)",
+            "Cirrus (Windows XP/2000/98 sürücüsü dahili)", "virtio-vga", "Yok"};
+    private static final String[] INPUT_ARM_V = {"xhci"};
+    private static final String[] INPUT_ARM_L = {"USB 3 klavye + tablet"};
+    private static final String[] INPUT_X86_V = {"xhci", "legacy", "ps2"};
+    private static final String[] INPUT_X86_L = {"USB 3 klavye + tablet (Linux, Windows 8+)",
+            "PS/2 klavye + USB 1.1 tablet (Windows XP/7, eski sistemler)",
+            "Sadece PS/2 klavye ve fare"};
     private static final String[] NET_V = {"user", "none"};
     private static final String[] NET_L = {"NAT (internet, port yönlendirme)", "Ağ yok"};
     private static final String[] NIC_V = {"virtio-net-pci", "e1000", "rtl8139"};
@@ -139,6 +146,8 @@ public class EditVmActivity extends Activity {
         name = edit("Ad", cfg.name, InputType.TYPE_CLASS_TEXT, null);
         arch = spinner("Mimari", ARCH_V, ARCH_L, cfg.arch);
         machine = edit("Makine (-machine)", cfg.machine, InputType.TYPE_CLASS_TEXT, "virt / q35 / pc");
+        note("x86: q35 = modern PC (Windows 7+, Linux). Windows XP/2000/98 için \"pc\" yazın; "
+                + "q35'te STOP 0x000000A5 mavi ekranı verir.");
         cpu = edit("İşlemci (-cpu)", cfg.cpu, InputType.TYPE_CLASS_TEXT,
                 "ARM: max,pauth-impdef=on · cortex-a76 · x86: max / qemu64");
         int cores = Runtime.getRuntime().availableProcessors();
@@ -167,8 +176,12 @@ public class EditVmActivity extends Activity {
         display = spinner("Görüntü", DISP_V, DISP_L, cfg.display);
         gpu = spinner("Ekran kartı", cfg.isAarch64() ? GPU_ARM_V : GPU_X86_V,
                 cfg.isAarch64() ? GPU_ARM_L : GPU_X86_L, cfg.gpu);
+        input = spinner("Klavye ve fare", cfg.isAarch64() ? INPUT_ARM_V : INPUT_X86_V,
+                cfg.isAarch64() ? INPUT_ARM_L : INPUT_X86_L, cfg.input);
+        note("Tablet = mutlak fare: dokunduğunuz yere tıklar. Windows 7 ve öncesinde USB 3 "
+                + "sürücüsü yoktur; onlar için PS/2 + USB 1.1 seçin.");
         usbInput = new CheckBox(this);
-        usbInput.setText("USB klavye + tablet (dokunmatik için gerekli)");
+        usbInput.setText("Klavye/fare aygıtlarını ekle (ekranlı kullanım için gerekli)");
         usbInput.setChecked(cfg.usbInput);
         form.addView(usbInput);
 
@@ -217,6 +230,8 @@ public class EditVmActivity extends Activity {
                 setOptions(gpu, tmp.isAarch64() ? GPU_ARM_V : GPU_X86_V,
                         tmp.isAarch64() ? GPU_ARM_L : GPU_X86_L, tmp.gpu);
                 select(diskIf, DISKIF_V, tmp.diskIf);
+                setOptions(input, tmp.isAarch64() ? INPUT_ARM_V : INPUT_X86_V,
+                        tmp.isAarch64() ? INPUT_ARM_L : INPUT_X86_L, tmp.input);
             }
 
             @Override
@@ -328,6 +343,7 @@ public class EditVmActivity extends Activity {
         c.display = value(display);
         c.gpu = value(gpu);
         c.usbInput = usbInput.isChecked();
+        c.input = value(input);
         c.network = value(network);
         c.nic = value(nic);
         c.hostfwd = hostfwd.getText().toString().replace(" ", "");

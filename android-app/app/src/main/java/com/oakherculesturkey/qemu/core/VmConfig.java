@@ -36,9 +36,18 @@ public final class VmConfig {
 
     /** vnc | serial */
     public String display = "vnc";
-    /** virtio-gpu-pci | ramfb | std | virtio-vga | none */
+    /** virtio-gpu-pci | ramfb | std | cirrus-vga | virtio-vga | none */
     public String gpu = "virtio-gpu-pci";
+    /** Whether keyboard/pointer devices are added at all (VNC display only). */
     public boolean usbInput = true;
+    /**
+     * Keyboard and pointer:
+     *  xhci   - USB 3 keyboard + tablet (modern guests, the only choice on ARM)
+     *  legacy - PS/2 keyboard + USB 1.1 (UHCI) tablet: Windows XP/7 and other
+     *           guests without an xHCI driver
+     *  ps2    - PS/2 keyboard and mouse only (relative mouse)
+     */
+    public String input = "xhci";
 
     /** user | none */
     public String network = "user";
@@ -66,6 +75,7 @@ public final class VmConfig {
             cpu = "max,pauth-impdef=on";
             firmware = "uefi";
             gpu = "virtio-gpu-pci";
+            input = "xhci"; // the virt board has no PS/2
             if ("ide".equals(diskIf)) diskIf = "virtio";
         } else {
             machine = "q35";
@@ -101,6 +111,7 @@ public final class VmConfig {
         p.setProperty("display", display);
         p.setProperty("gpu", gpu);
         p.setProperty("usbInput", Boolean.toString(usbInput));
+        p.setProperty("input", input);
         p.setProperty("network", network);
         p.setProperty("nic", nic);
         p.setProperty("hostfwd", hostfwd);
@@ -130,6 +141,7 @@ public final class VmConfig {
         display = p.getProperty("display", display);
         gpu = p.getProperty("gpu", gpu);
         usbInput = Boolean.parseBoolean(p.getProperty("usbInput", Boolean.toString(usbInput)));
+        input = p.getProperty("input", input);
         network = p.getProperty("network", network);
         nic = p.getProperty("nic", nic);
         hostfwd = p.getProperty("hostfwd", hostfwd);
@@ -166,7 +178,8 @@ public final class VmConfig {
         "Linux ARM64 (UEFI, ekranlı)",
         "Linux ARM64 (sadece seri konsol)",
         "x86_64 PC (Linux, BIOS)",
-        "x86_64 PC (Windows / eski sistemler: IDE, e1000)",
+        "Windows 7 / Vista (q35, IDE, e1000)",
+        "Windows XP / 2000 / 98 (pc, IDE, Cirrus, RTL8139)",
         "x86_64 PC (UEFI)",
         "Boş (elle ayarla)",
     };
@@ -189,14 +202,33 @@ public final class VmConfig {
                 c.applyArchDefaults();
                 break;
             case 3:
-                c.name = "x86_64 Windows";
+                // Windows 7 has AHCI, e1000, UHCI/EHCI drivers - but no xHCI
+                c.name = "Windows 7";
                 c.arch = ARCH_X86_64;
                 c.applyArchDefaults();
                 c.diskIf = "ide";
                 c.nic = "e1000";
-                c.memMb = 4096;
+                c.input = "legacy";
+                c.memMb = 2048;
+                c.bootFrom = "cdrom";
                 break;
             case 4:
+                // XP/2000 do not understand q35's ACPI (STOP 0xA5): use i440FX "pc"
+                c.name = "Windows XP";
+                c.arch = ARCH_X86_64;
+                c.applyArchDefaults();
+                c.machine = "pc";
+                c.cpu = "qemu32";
+                c.smp = 1;
+                c.memMb = 512;
+                c.diskIf = "ide";
+                c.gpu = "cirrus-vga";
+                c.nic = "rtl8139";
+                c.input = "legacy";
+                c.tcgThread = "default";
+                c.bootFrom = "cdrom";
+                break;
+            case 5:
                 c.name = "x86_64 UEFI";
                 c.arch = ARCH_X86_64;
                 c.applyArchDefaults();

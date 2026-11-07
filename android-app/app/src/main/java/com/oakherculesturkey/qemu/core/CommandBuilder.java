@@ -89,16 +89,26 @@ public final class CommandBuilder {
         }
 
         boolean vnc = "vnc".equals(c.display);
-        boolean needXhci = (vnc && c.usbInput) || "usb".equals(c.diskIf);
+        // ARM's virt board has no PS/2, so only USB 3 input works there
+        String input = arm ? "xhci" : c.input;
+        boolean wantInput = vnc && c.usbInput;
+        boolean usb3Input = wantInput && "xhci".equals(input);
+        boolean needXhci = usb3Input || "usb".equals(c.diskIf);
         if (needXhci) {
             a.add("-device");
             a.add("qemu-xhci,id=xhci");
         }
-        if (vnc && c.usbInput) {
+        if (usb3Input) {
             a.add("-device");
-            a.add("usb-kbd");
+            a.add("usb-kbd,bus=xhci.0");
             a.add("-device");
-            a.add("usb-tablet");
+            a.add("usb-tablet,bus=xhci.0");
+        } else if (wantInput && "legacy".equals(input)) {
+            // PS/2 keyboard (always present on PC machines) + USB 1.1 tablet
+            a.add("-device");
+            a.add("piix3-usb-uhci,id=uhci");
+            a.add("-device");
+            a.add("usb-tablet,bus=uhci.0");
         }
 
         // Display
@@ -167,7 +177,7 @@ public final class CommandBuilder {
                             + ",bootindex=" + diskBoot);
                     break;
                 case "usb":
-                    a.add("usb-storage,drive=hd0,bootindex=" + diskBoot);
+                    a.add("usb-storage,bus=xhci.0,drive=hd0,bootindex=" + diskBoot);
                     break;
                 default:
                     a.add("virtio-blk-pci,drive=hd0,bootindex=" + diskBoot);
