@@ -5,6 +5,10 @@
 #   APK_ABIS=arm64-v8a,x86_64 ./scripts/build-apk.sh
 #
 # Output: dist/qemu-android-<version>.apk
+#
+# Signing: set QEMU_KEYSTORE (path to the .jks) and QEMU_KEYSTORE_PASSWORD.
+# The key is never stored in the repository; without it the APK is signed
+# with this machine's Android debug key (dist/...-debugkey.apk).
 source "$(dirname "$0")/env.sh"
 
 : "${APK_ABIS:=arm64-v8a}"
@@ -59,6 +63,12 @@ echo "sdk.dir=$ANDROID_HOME" > local.properties
 
 ver="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts)"
 mkdir -p "$REPO_ROOT/dist"
-apk="$REPO_ROOT/dist/qemu-android-$ver.apk"
+if [ -n "${QEMU_KEYSTORE:-}" ] && [ -f "$QEMU_KEYSTORE" ] && [ -n "${QEMU_KEYSTORE_PASSWORD:-}" ]; then
+  apk="$REPO_ROOT/dist/qemu-android-$ver.apk"
+else
+  # Not signed with the release key: cannot be installed over official builds.
+  echo "NOTE: QEMU_KEYSTORE/QEMU_KEYSTORE_PASSWORD not set, signing with the local debug key" >&2
+  apk="$REPO_ROOT/dist/qemu-android-$ver-debugkey.apk"
+fi
 cp app/build/outputs/apk/release/app-release.apk "$apk"
 log "APK: $apk ($(du -h "$apk" | cut -f1))"

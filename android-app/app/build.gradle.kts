@@ -10,8 +10,8 @@ android {
         applicationId = "com.oakherculesturkey.qemu"
         minSdk = 28
         targetSdk = 37
-        versionCode = 4
-        versionName = "0.2.0"
+        versionCode = 5
+        versionName = "0.2.1"
         ndk {
             // Snapdragon 8 Elite and every other modern phone: arm64 only.
             // x86_64 can be added for emulators / Chromebooks (see build-apk.sh).
@@ -19,24 +19,29 @@ android {
         }
     }
 
+    // Release signing key: never stored in the repository. Supplied through
+    // environment variables (CI: GitHub Secrets) or -PqemuKeystore=...
+    // Without it, builds are signed with this machine's Android debug key.
+    val ksPath = System.getenv("QEMU_KEYSTORE") ?: project.findProperty("qemuKeystore") as String?
+    val ksPass = System.getenv("QEMU_KEYSTORE_PASSWORD")
+        ?: project.findProperty("qemuKeystorePassword") as String?
+    val haveReleaseKey = !ksPath.isNullOrEmpty() && !ksPass.isNullOrEmpty() && file(ksPath).exists()
+
     signingConfigs {
-        // Fixed, intentionally public key so that every build (local or CI)
-        // has the same signature and can be installed over the previous one.
-        getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        if (haveReleaseKey) {
+            create("release") {
+                storeFile = file(ksPath!!)
+                storePassword = ksPass
+                keyAlias = System.getenv("QEMU_KEY_ALIAS") ?: "qemu-android"
+                keyPassword = ksPass
+            }
         }
     }
 
     buildTypes {
-        getByName("debug") {
-            signingConfig = signingConfigs.getByName("debug")
-        }
         getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (haveReleaseKey) "release" else "debug")
         }
     }
 

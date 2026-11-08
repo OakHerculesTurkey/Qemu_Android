@@ -205,3 +205,23 @@ TCG ile çalıştığı için masaüstüne göre belirgin şekilde yavaştır.
 * `linux-user` (qemu-aarch64 gibi kullanıcı modu emülatörler) derlenmedi.
 * Uygulama henüz gerçek cihazda test edilmedi; derleme ortamında çekirdek mantık
   (VNC, QMP, seri konsol) gerçek QEMU Android derlemesine karşı test edildi.
+
+## İmzalama ve sürümler
+
+* İmza anahtarı **depoda tutulmaz**. `scripts/build-apk.sh`, `QEMU_KEYSTORE` (.jks yolu) ve
+  `QEMU_KEYSTORE_PASSWORD` ortam değişkenleri verilirse resmi anahtarla imzalar; verilmezse
+  makinenin Android debug anahtarıyla `dist/qemu-android-<sürüm>-debugkey.apk` üretir
+  (resmi sürümün üzerine kurulamaz).
+* GitHub Actions anahtarı iki depo sırrından alır: `QEMU_KEYSTORE_B64` (base64 .jks) ve
+  `QEMU_KEYSTORE_PASSWORD`. Actions → "Build QEMU for Android" → **Run workflow** çalıştırılınca
+  APK ve QEMU paketleri **Releases** sayfasına yüklenir.
+* 0.2.0 ve öncesi, depoda açıkça duran (artık kullanılmayan) bir anahtarla imzalanmıştı;
+  0.2.1'den itibaren yeni anahtar kullanılır. Eski sürümden geçerken uygulamayı bir kez
+  kaldırıp yeniden kurmak gerekir.
+
+## Lisans
+
+Bu depodaki betikler, yamalar ve Android uygulaması **GPL-2.0-or-later** ile lisanslıdır
+(`LICENSE`). QEMU ve bağımlılıkları (GLib, pixman, libslirp, EDK2, SeaBIOS, …) kendi
+lisanslarına tabidir. "QEMU", Fabrice Bellard'ın ticari markasıdır; bu proje QEMU
+projesinin resmi bir parçası değildir.

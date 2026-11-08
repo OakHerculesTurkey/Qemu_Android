@@ -2,3 +2,9 @@
 /work/
 # Release tarballs produced by scripts/package.sh
 /dist/
+
+# Signing keys never go into the repository
+*.jks
+*.keystore
+*.p12
+signing.properties

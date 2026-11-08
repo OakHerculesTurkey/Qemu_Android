@@ -5,6 +5,14 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the APK as a GitHub Release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -49,10 +57,30 @@ jobs:
 
       - name: Build APK
         if: matrix.abi == 'arm64-v8a'
-        run: ./scripts/build-apk.sh
+        env:
+          KEYSTORE_B64: ${{ secrets.QEMU_KEYSTORE_B64 }}
+          QEMU_KEYSTORE_PASSWORD: ${{ secrets.QEMU_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export QEMU_KEYSTORE="$RUNNER_TEMP/release.jks"
+          fi
+          ./scripts/build-apk.sh
+          rm -f "$RUNNER_TEMP/release.jks"
 
       - uses: actions/upload-artifact@v4
         if: matrix.abi == 'arm64-v8a'
         with:
           name: qemu-android-apk
           path: dist/*.apk
+
+      - name: Publish release
+        if: matrix.abi == 'arm64-v8a' && github.event_name == 'workflow_dispatch' && inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' android-app/app/build.gradle.kts)"
+          gh release create "v$ver" dist/*.apk dist/*.tar.gz \
+            --target "$GITHUB_SHA" --title "QEMU Android $ver" \
+            --notes "APK: qemu-android-$ver.apk (arm64-v8a). Native QEMU bundles: *.tar.gz." \
+            || gh release upload "v$ver" dist/*.apk dist/*.tar.gz --clobber
