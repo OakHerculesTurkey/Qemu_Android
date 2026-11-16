@@ -1,0 +1,7 @@
+/work/
+/dist/
+/launcher/local.properties
+/launcher/.gradle/
+/launcher/build/
+/launcher/app/build/
+/launcher/app/src/main/jniLibs/

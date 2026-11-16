@@ -1,0 +1,101 @@
+diff --git a/bot_query_hook_linux.cpp b/bot_query_hook_linux.cpp
+index e5f1752..4ba542b 100644
+--- a/bot_query_hook_linux.cpp
++++ b/bot_query_hook_linux.cpp
+@@ -4,7 +4,7 @@
+ // bot_query_hook_linux.cpp
+ //
+ 
+-#ifndef _WIN32
++#if !defined(_WIN32) && (defined(__i386__) || defined(__x86_64__))
+ 
+ #ifndef __USE_GNU
+ #define __USE_GNU
+@@ -216,3 +216,25 @@ bool unhook_sendto_function(void)
+ }
+ 
+ #endif /*!_WIN32*/
++
++#if !defined(_WIN32) && !(defined(__i386__) || defined(__x86_64__))
++// Non-x86 (ARM64 Android etc.): no in-memory patching of sendto(). The
++// server-query connection-time faking (bot_conntimes) is simply unavailable.
++#include <sys/socket.h>
++#include "bot_query_hook.h"
++
++ssize_t call_original_sendto(int socket, const void *message, size_t length, int flags, const struct sockaddr *dest_addr, socklen_t dest_len)
++{
++   return sendto(socket, message, length, flags, dest_addr, dest_len);
++}
++
++bool hook_sendto_function(void)
++{
++   return(false);
++}
++
++bool unhook_sendto_function(void)
++{
++   return(true);
++}
++#endif
+diff --git a/dll.cpp b/dll.cpp
+index 93405c8..c73ce90 100644
+--- a/dll.cpp
++++ b/dll.cpp
+@@ -4,6 +4,9 @@
+ // dll.cpp
+ //
+ 
++#ifdef __ANDROID__
++#include "android_addon.h"
++#endif
+ #include <string.h>
+ 
+ #include <malloc.h>
+@@ -1018,6 +1021,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
+       return (FALSE); // returning FALSE prevents metamod from attaching this plugin
+    }
+ 
++#ifdef __ANDROID__
++   // Android: config/chat/name/waypoint files ship inside the plugin and are
++   // written to <basedir>/valve/addons/jk_botti if they don't exist yet.
++   jk_android_install_addon_files("valve");
++#endif
++
+    // keep track of the pointers to engine function tables metamod gives us
+    gpMetaGlobals = pMGlobals;
+    memcpy (pFunctionTable, &gMetaFunctionTable, sizeof (META_FUNCTIONS));
+diff --git a/util.cpp b/util.cpp
+index 82c73c2..c56d73b 100644
+--- a/util.cpp
++++ b/util.cpp
+@@ -159,15 +159,17 @@ inline double fcos_sse(double x)
+    return p;
+ }
+ 
++#if defined(__i386__) || defined(__x86_64__)
+ // x87 fsincos asm: ~2.4x faster than glibc sin()+cos().
+ inline void fsincos_x87(double x, double &s, double &c)
+ {
+    __asm__ ("fsincos;" : "=t" (c), "=u" (s) : "0" (x));
+ }
++#endif
+ 
+ inline void fsincos(double x, double &s, double &c)
+ {
+-#if defined(__SSE_MATH__)
++#if defined(__SSE_MATH__) || !(defined(__i386__) || defined(__x86_64__))
+    fsincos_sse(x, s, c);
+ #else
+    fsincos_x87(x, s, c);
+@@ -1282,7 +1284,11 @@ void UTIL_ConsolePrintf( const char *fmt, ... )
+ void UTIL_AssertConsolePrintf(const char *file, const char *str, int line)
+ {
+    UTIL_ConsolePrintf("[ASSERT] '%s' : '%s' : 'line %d'", file, str, line);
++#if defined(__i386__) || defined(__x86_64__)
+    __asm__ ("int $3");
++#else
++   __builtin_trap();
++#endif
+ }
+ 
+ char* UTIL_VarArgs2( char * string, size_t strlen, char *format, ... )

@@ -1,0 +1,78 @@
+name: jk_botti for Xash3D (Android)
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "xash-jkbotti/**"
+      - ".github/workflows/jk-botti.yml"
+  pull_request:
+    paths:
+      - "xash-jkbotti/**"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish the APK as a GitHub Release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: xash-jkbotti
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host tools
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache NDK, SDK and sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            xash-jkbotti/work/android-ndk-*
+            xash-jkbotti/work/android-sdk
+            xash-jkbotti/work/src
+          key: jk-${{ hashFiles('xash-jkbotti/build.sh', 'xash-jkbotti/patches/**') }}
+
+      - name: Build libraries and APK
+        env:
+          KEYSTORE_B64: ${{ secrets.JK_KEYSTORE_B64 }}
+          JK_KEYSTORE_PASSWORD: ${{ secrets.JK_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export JK_KEYSTORE="$RUNNER_TEMP/release.jks"
+          fi
+          ./build.sh
+          rm -f "$RUNNER_TEMP/release.jks"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jk_botti-xash-apk
+          path: xash-jkbotti/dist/*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jk_botti-xash-libs-arm64-v8a
+          path: xash-jkbotti/dist/libs/arm64-v8a/*.so
+
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' && inputs.release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ver="$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' launcher/app/build.gradle.kts)"
+          gh release create "jk-botti-v$ver-${GITHUB_RUN_NUMBER}" dist/*.apk \
+            --title "jk_botti for Xash3D (Android) $ver" \
+            --notes "jk_botti + Metamod-FWGS + Half-Life (hlsdk-portable), arm64-v8a. Requires Xash3D FWGS (su.xash.engine)."

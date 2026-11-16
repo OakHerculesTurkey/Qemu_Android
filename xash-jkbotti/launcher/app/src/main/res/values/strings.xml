@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">jk_botti (Xash3D)</string>
+    <string name="subtitle">Half-Life deathmatch botları — Xash3D FWGS + Metamod-FWGS, arm64.</string>
+    <string name="engine">Motor</string>
+    <string name="engine_missing">Xash3D FWGS kurulu değil</string>
+    <string name="libs_missing">APK içindeki oyun kütüphaneleri eksik</string>
+    <string name="launch_failed">Xash3D başlatılamadı</string>
+    <string name="load_bots">jk_botti botlarını yükle (Metamod)</string>
+    <string name="extra_args">Ek motor parametreleri</string>
+    <string name="start">Half-Life\'ı başlat</string>
+    <string name="help">Kullanım\n• Önce Xash3D FWGS\'i kurun ve Half-Life oyun dosyalarını (valve klasörü) Xash\'in oyun klasörüne kopyalayın.\n• \"Half-Life\'ı başlat\"a basın, menüden Çok Oyunculu → Sunucu Oluştur ile bir harita açın. Varsayılan ayarlarla 5 bot otomatik katılır.\n• İlk açılışta ayar ve waypoint dosyaları valve/addons/jk_botti/ klasörüne yazılır; jk_botti.cfg dosyasını oradan düzenleyebilirsiniz.\n\nKonsol komutları (~):\njk_botti addbot — bot ekle\njk_botti kickall — tüm botları at\njk_botti botskill 1-5 — zorluk (1 en zor)\njk_botti min_bots N / max_bots N\nmeta list — yüklü eklentiler</string>
+</resources>

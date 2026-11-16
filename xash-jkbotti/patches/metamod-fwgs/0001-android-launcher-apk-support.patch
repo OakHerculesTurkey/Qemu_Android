@@ -1,0 +1,189 @@
+diff --git a/metamod/CMakeLists.txt b/metamod/CMakeLists.txt
+index 232ddf7..4411a7c 100644
+--- a/metamod/CMakeLists.txt
++++ b/metamod/CMakeLists.txt
+@@ -132,7 +132,9 @@ target_compile_options(metamod PRIVATE ${METAMOD_COMPILE_OPTIONS})
+ target_link_options(metamod PRIVATE ${METAMOD_LINK_OPTIONS})
+ target_link_libraries(metamod PRIVATE library_suffix)
+ 
+-if (UNIX)
++if (ANDROID)
++    target_link_libraries(metamod PRIVATE dl log) # pthread is part of bionic libc
++elseif (UNIX)
+     target_link_libraries(metamod PRIVATE dl pthread)
+ elseif (WIN32)
+     target_link_libraries(metamod PRIVATE psapi)
+diff --git a/metamod/src/game_support.cpp b/metamod/src/game_support.cpp
+index 36ff5bb..ecde25c 100644
+--- a/metamod/src/game_support.cpp
++++ b/metamod/src/game_support.cpp
+@@ -252,6 +252,41 @@ bool setup_gamedll(gamedll_t *gamedll)
+ 		knownfn = libpath;
+ 	}
+ 
++#ifdef __ANDROID__
++	// Android: game libraries can't be loaded from shared storage, they are
++	// shipped inside a launcher APK. The launcher passes MM_GAMEDLL (absolute
++	// path), or at least XASH3D_GAMELIBDIR (APK native library directory).
++	if (!g_config->m_gamedll) {
++		const char *env_dll = getenv("MM_GAMEDLL");
++		const char *libdir = getenv("XASH3D_GAMELIBDIR");
++		char guess[MAX_PATH] = "";
++
++		if (env_dll && *env_dll) {
++			Q_strlcpy(guess, env_dll);
++		}
++		else if (libdir && *libdir) {
++			for (auto& k : g_known_games) {
++				if (!k.name || Q_stricmp(k.name, gamedll->name) || !k.linux_so)
++					continue;
++				char stem[MAX_PATH], libname[MAX_PATH];
++				const char *base = Q_strrchr(k.linux_so, '/');
++				Q_strlcpy(stem, base ? base + 1 : k.linux_so);
++				char *dot = Q_strrchr(stem, '.');
++				if (dot) *dot = '\0';
++				COM_StripIntelSuffix(stem);
++				COM_GenerateCommonLibraryName(stem, libname, sizeof libname);
++				Q_snprintf(guess, sizeof guess, "%s/%s", libdir, libname);
++				break;
++			}
++		}
++
++		if (guess[0] && is_file_exists(guess)) {
++			g_config->m_gamedll = Q_strdup(guess);
++			META_LOG("Android: using game DLL from launcher: %s", guess);
++		}
++	}
++#endif
++
+ 	// Use override-dll if specified.
+ 	if (g_config->m_gamedll) {
+ 		Q_strlcpy(gamedll->pathname, g_config->m_gamedll);
+diff --git a/metamod/src/mlist.cpp b/metamod/src/mlist.cpp
+index 47a6ca3..7fef03c 100644
+--- a/metamod/src/mlist.cpp
++++ b/metamod/src/mlist.cpp
+@@ -226,6 +226,32 @@ bool MPluginList::ini_startup()
+ 	int n, ln;
+ 
+ 	if (!is_file_exists_in_gamedir(m_inifile)) {
++		// No plugins.ini: accept a space separated list of plugin paths in
++		// MM_PLUGINS (set by the Android launcher, also usable elsewhere).
++		const char *env = getenv("MM_PLUGINS");
++		if (env && *env) {
++			char list[4096];
++			Q_strlcpy(list, env);
++			n = 0;
++			char *save = nullptr;
++			for (char *tok = strtok_r(list, " ;", &save); tok; tok = strtok_r(nullptr, " ;", &save)) {
++				char line[MAX_STRBUF_LEN];
++				Q_snprintf(line, sizeof line, "linux %s", tok);
++				auto plug = new MPlugin();
++				if (!plug->ini_parseline(line) || find(plug->m_pathname)) {
++					delete plug;
++					continue;
++				}
++				plug->m_index = ++m_last_index;
++				plug->m_action = PA_LOAD;
++				m_plugins.push_back(plug);
++				META_LOG("env: Read plugin config for: %s", plug->m_desc);
++				n++;
++			}
++			META_LOG("env: Found %d plugins to load from MM_PLUGINS", n);
++			return true;
++		}
++
+ 		META_ERROR("ini: Metamod plugins file empty or missing: %s", m_inifile);
+ 		return false;
+ 	}
+@@ -308,6 +334,16 @@ bool MPluginList::ini_refresh()
+ 
+ 	FILE* fp = fopen(m_inifile, "r");
+ 	if (!fp) {
++		// Plugins came from MM_PLUGINS at startup: keep them as they are.
++		const char *env = getenv("MM_PLUGINS");
++		if (env && *env) {
++			for (auto p : m_plugins) {
++				if (p->m_status >= PL_VALID && (p->m_action == PA_NONE || p->m_action == PA_NULL))
++					p->m_action = PA_KEEP;
++			}
++			return true;
++		}
++
+ 		META_ERROR("ini: Unable to open plugins file '%s': %s", m_inifile, strerror(errno));
+ 		return false;
+ 	}
+diff --git a/metamod/src/mplugin.cpp b/metamod/src/mplugin.cpp
+index 11efcc9..8a9d9b0 100644
+--- a/metamod/src/mplugin.cpp
++++ b/metamod/src/mplugin.cpp
+@@ -1,4 +1,5 @@
+ #include "precompiled.h"
++#include "library_suffix.h"
+ 
+ const char *MPlugin::s_rPrintLoadTime[][4] = {
+ 	// SL_SIMPLE		// SL_SHOW	// SL_ALLOWED					// SL_NOW
+@@ -239,6 +240,32 @@ bool MPlugin::resolve()
+ 	else
+ 		found = resolve_dirs(m_filename, tempbuf, sizeof tempbuf);
+ 
++#ifdef __ANDROID__
++	// Android: plugins are shipped as lib<name>_android_<arch>.so inside the
++	// launcher APK; try that directory using the bare file name.
++	const char *libdir = getenv("XASH3D_GAMELIBDIR");
++	if (!found && libdir && *libdir) {
++		const char *base = Q_strrchr(m_filename, '/');
++		base = base ? base + 1 : m_filename;
++
++		char stem[MAX_PATH], libname[MAX_PATH], buf[MAX_PATH];
++		Q_strlcpy(stem, base);
++		char *dot = Q_strrchr(stem, '.');
++		if (dot && !Q_strcmp(dot, ".so")) *dot = '\0';
++		COM_StripIntelSuffix(stem);
++
++		const char *candidates[3] = { base, stem, nullptr };
++		COM_GenerateCommonLibraryName(stem, libname, sizeof libname);
++		candidates[2] = libname;
++
++		for (const char *c : candidates) {
++			Q_snprintf(buf, sizeof buf, "%s/%s", libdir, c);
++			if ((found = resolve_suffix(buf, tempbuf, sizeof tempbuf)))
++				break;
++		}
++	}
++#endif
++
+ 	if (!found) {
+ 		META_DEBUG(2, "Couldn't resolve '%s' to file", m_filename);
+ 		return false;
+diff --git a/metamod/src/sys_module.cpp b/metamod/src/sys_module.cpp
+index 74d1366..b5df230 100644
+--- a/metamod/src/sys_module.cpp
++++ b/metamod/src/sys_module.cpp
+@@ -1,5 +1,10 @@
+ #include "precompiled.h"
+ 
++#ifndef RTLD_DEEPBIND
++#define RTLD_DEEPBIND 0 // not available on Android (bionic)
++#endif
++
++
+ const module_handle_t CSysModule::INVALID_HANDLE = (module_handle_t)0;
+ 
+ CSysModule::CSysModule() : m_handle(INVALID_HANDLE), m_base(0), m_size(0), m_free(true)
+@@ -149,11 +154,13 @@ module_handle_t CSysModule::load(const char *filepath)
+ 		Q_sprintf(buf, "/proc/%i/maps", getpid());
+ 
+ 		FILE* fp = fopen(buf, "r");
++		if (!fp)
++			return m_handle;
+ 
+ 		while (fgets(buf, sizeof buf, fp)) {
+-			uintptr_t start, end;
++			unsigned long start = 0, end = 0;
+ 
+-			int args = sscanf(buf, "%x-%x %128s %128s %128s %128s %255s", &start, &end, dummy, dummy, dummy, dummy, path);
++			int args = sscanf(buf, "%lx-%lx %128s %128s %128s %128s %255s", &start, &end, dummy, dummy, dummy, dummy, path);
+ 			if (args != 7) {
+ 				continue;
+ 			}

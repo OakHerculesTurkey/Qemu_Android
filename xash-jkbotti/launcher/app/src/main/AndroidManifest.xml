@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Xash3D FWGS lists installed mod launchers via the su.xash.engine.MOD
+         intent and must be able to see this package (forceQueryable). -->
+    <application
+        android:allowBackup="false"
+        android:forceQueryable="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@android:style/Theme.DeviceDefault">
+
+        <meta-data
+            android:name="su.xash.engine.gamedir"
+            android:value="valve" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="stateHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="su.xash.engine.MOD" />
+            </intent-filter>
+        </activity>
+    </application>
+
+    <queries>
+        <package android:name="su.xash.engine" />
+        <package android:name="su.xash.engine.test" />
+    </queries>
+</manifest>
