@@ -37,8 +37,66 @@ index e5f1752..4ba542b 100644
 +   return(true);
 +}
 +#endif
+diff --git a/commands.cpp b/commands.cpp
+index a9b0691..f9d57dc 100644
+--- a/commands.cpp
++++ b/commands.cpp
+@@ -1318,6 +1318,53 @@ FORCE_STACK_ALIGN void jk_botti_ServerCommand (void)
+          UTIL_ConsolePrintf("Disabled min_bots/max_bots.");
+       }
+    }
++   else if(FStrEq(CMD_ARGV(1), "kickbot"))
++   {
++      // kick one bot: "kickbot" picks a random one, "kickbot <name>" a named one
++      const char *name = CMD_ARGV(2);
++      int pick = -1;
++
++      if(name && *name)
++      {
++         for (int index = 0; index < 32; index++)
++         {
++            if (bots[index].is_used && !FNullEnt(bots[index].pEdict) &&
++                stricmp(STRING(bots[index].pEdict->v.netname), name) == 0)
++            {
++               pick = index;
++               break;
++            }
++         }
++      }
++      else
++         pick = UTIL_PickRandomBot();
++
++      if(pick == -1)
++      {
++         UTIL_ConsolePrintf("No bot to kick.");
++      }
++      else
++      {
++         UTIL_ConsolePrintf("Kicking bot %s.", STRING(bots[pick].pEdict->v.netname));
++         BotKick(bots[pick]);
++
++         // don't let min_bots add it straight back
++         if(min_bots > 0)
++         {
++            int bot_count = 0;
++            for (int index = 0; index < 32; index++)
++               if (bots[index].is_used)
++                  bot_count++;
++            if(bot_count - 1 < min_bots)
++            {
++               min_bots = bot_count - 1;
++               if(max_bots != -1 && max_bots < min_bots)
++                  max_bots = min_bots;
++               UTIL_ConsolePrintf("min_bots lowered to %d.", min_bots);
++            }
++         }
++      }
++   }
+    else if(!ProcessCommand(SRVCMD_TYPE, print_to_server_output, NULL, CMD_ARGV (1), CMD_ARGV (2), CMD_ARGV (3), CMD_ARGV (4), CMD_ARGV (5), CMD_ARGV (6)))
+    {
+       UTIL_ConsolePrintf("%s: Unknown command \'%s\'\n", CMD_ARGV(0), CMD_ARGS());
 diff --git a/dll.cpp b/dll.cpp
-index 93405c8..c73ce90 100644
+index 93405c8..f8ba51a 100644
 --- a/dll.cpp
 +++ b/dll.cpp
 @@ -4,6 +4,9 @@
@@ -51,7 +109,20 @@ index 93405c8..c73ce90 100644
  #include <string.h>
  
  #include <malloc.h>
-@@ -1018,6 +1021,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
+@@ -703,6 +706,12 @@ static void StartFrameOpenConfigFile(void)
+ 
+    need_to_open_cfg = FALSE;  // only do this once!!!
+ 
++#ifdef __ANDROID__
++   // listen server on the phone: on-screen "+" / "-" bot buttons
++   if (!IS_DEDICATED_SERVER())
++      jk_android_add_touch_buttons([](const char *cmd) { SERVER_COMMAND((char *)cmd); });
++#endif
++
+    // Clear custom team model mapping before re-reading config
+    UTIL_ClearTeamModelMapping();
+ 
+@@ -1018,6 +1027,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
        return (FALSE); // returning FALSE prevents metamod from attaching this plugin
     }
  

@@ -47,15 +47,50 @@ file(GLOB_RECURSE ADDON_FILES RELATIVE "${ADDON_DIR}"
 	"${ADDON_DIR}/*.cfg" "${ADDON_DIR}/*.txt" "${ADDON_DIR}/waypoints/*")
 list(FILTER ADDON_FILES EXCLUDE REGEX "^dlls/")
 list(SORT ADDON_FILES)
+
+# Android default config: no bots are added automatically, they are added and
+# removed with the on-screen +/- buttons (or "jk_botti addbot" / "kickbot").
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ADDON_DIR}/jk_botti.cfg")
+file(READ "${ADDON_DIR}/jk_botti.cfg" UPSTREAM_CFG)
+string(REGEX REPLACE "\naddbot " "\n#addbot " ANDROID_CFG "${UPSTREAM_CFG}")
+string(PREPEND ANDROID_CFG
+"# Android (Xash3D FWGS): bots are NOT added automatically.
+# Use the on-screen + / - buttons, or the console:
+#   jk_botti addbot   /   jk_botti kickbot   /   jk_botti kickall
+# Uncomment the addbot lines below (or set min_bots/max_bots) to have bots
+# join every map by themselves.
+#
+")
+set(ANDROID_CFG_FILE "${CMAKE_CURRENT_BINARY_DIR}/jk_botti.android.cfg")
+file(WRITE "${ANDROID_CFG_FILE}" "${ANDROID_CFG}")
+
+# Entries: <path relative to addons/jk_botti>|<source file>[|<legacy file>]
+# A file that exists on the device is only replaced when it is byte-identical
+# to its <legacy file> (an unmodified default from an older build).
+set(EMBED_ENTRIES "")
+set(ADDON_DEPS "")
+foreach(rel IN LISTS ADDON_FILES)
+	if(rel STREQUAL "jk_botti.cfg")
+		list(APPEND EMBED_ENTRIES "${rel}|${ANDROID_CFG_FILE}|${ADDON_DIR}/${rel}")
+	else()
+		list(APPEND EMBED_ENTRIES "${rel}|${ADDON_DIR}/${rel}")
+	endif()
+	list(APPEND ADDON_DEPS "${ADDON_DIR}/${rel}")
+endforeach()
+foreach(icon bot_add bot_remove)
+	list(APPEND EMBED_ENTRIES "touch/${icon}.png|${CMAKE_CURRENT_SOURCE_DIR}/touch/${icon}.png")
+	list(APPEND ADDON_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/touch/${icon}.png")
+endforeach()
+
 set(EMBED_LIST "${CMAKE_CURRENT_BINARY_DIR}/addon_files.list")
-file(WRITE "${EMBED_LIST}" "${ADDON_FILES}")
-list(TRANSFORM ADDON_FILES PREPEND "${ADDON_DIR}/" OUTPUT_VARIABLE ADDON_DEPS)
+file(WRITE "${EMBED_LIST}" "${EMBED_ENTRIES}")
 set(EMBED_CPP "${CMAKE_CURRENT_BINARY_DIR}/addon_files.cpp")
 add_custom_command(
 	OUTPUT "${EMBED_CPP}"
-	COMMAND ${CMAKE_COMMAND} -DADDON_DIR=${ADDON_DIR} -DOUT=${EMBED_CPP}
+	COMMAND ${CMAKE_COMMAND} -DOUT=${EMBED_CPP}
 		-DLIST=${EMBED_LIST} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_files.cmake"
-	DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/embed_files.cmake" ${ADDON_DEPS}
+	DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/embed_files.cmake" "${EMBED_LIST}"
+		"${ANDROID_CFG_FILE}" ${ADDON_DEPS}
 	COMMENT "Embedding jk_botti addon files")
 
 # --- the plugin

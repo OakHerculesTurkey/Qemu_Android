@@ -31,9 +31,11 @@ Xash3D ─▶ libmetamod_android_arm64.so ─▶ libhl_android_arm64.so      (Ha
 Xash3D ─▶ libclient_android_arm64.so                                 (HL istemcisi)
 ```
 
-Botların ayar, sohbet, isim ve 26 standart harita waypoint dosyası eklentinin içine
-gömülüdür; ilk açılışta `valve/addons/jk_botti/` altına yazılır (var olan dosyaların
-üzerine yazılmaz, yani düzenlemeleriniz ve kaydedilen waypoint'ler korunur).
+Botların ayar, sohbet, isim ve 26 standart harita waypoint dosyası ile ekran butonu
+simgeleri eklentinin içine gömülüdür; ilk açılışta `valve/addons/jk_botti/` altına yazılır.
+Var olan dosyaların üzerine yazılmaz (düzenlemeleriniz ve kaydedilen waypoint'ler korunur);
+tek istisna, hiç değiştirilmemiş eski varsayılan `jk_botti.cfg`'dir — o yeni varsayılanla
+değiştirilir.
 
 ## Kurulum (telefon)
 
@@ -42,8 +44,16 @@ gömülüdür; ilk açılışta `valve/addons/jk_botti/` altına yazılır (var 
    ve Xash'e dosya erişim izni verin.
 3. Bu klasördeki APK'yı (`dist/jk_botti-xash-*.apk` ya da GitHub Actions çıktısı) kurun.
 4. **jk_botti (Xash3D)** uygulamasını açıp **Half-Life'ı başlat**'a basın.
-5. Menüden **Çok Oyunculu → Sunucu Oluştur** ile bir harita açın. Varsayılan `jk_botti.cfg`
-   5 bot ekler.
+5. Menüden **Çok Oyunculu → Sunucu Oluştur** ile bir harita açın.
+6. Botları ekranın üst ortasındaki **+** / **−** butonlarıyla ekleyip çıkarın.
+
+Android sürümünde botlar **kendiliğinden eklenmez** (asıl jk_botti ayarı her haritada 5 bot
+ekler). Her haritada otomatik bot isterseniz `valve/addons/jk_botti/jk_botti.cfg` içindeki
+`#addbot` satırlarının başındaki `#` işaretini kaldırın ya da `min_bots` / `max_bots` ayarlayın.
+
+**+ / − butonları** yalnızca telefonda kurulan sunucuda (listen server) ve çok oyunculu oyunda
+görünür. Geçicidirler, Xash'in dokunmatik düzen dosyasına kaydedilmezler. Dokunmatik düzenleyici
+açıkken başka bir yere taşınabilirler; yeni haritada varsayılan yerlerine dönerler.
 
 Uygulama Xash'in mod listesinde de görünür (`su.xash.engine.MOD`); oradan seçilirse
 aynı parametrelerle başlar.
@@ -52,7 +62,8 @@ aynı parametrelerle başlar.
 
 | Komut | |
 |---|---|
-| `jk_botti addbot` | bot ekle (`addbot <model> <isim> <skill>`) |
+| `jk_botti addbot` | bot ekle (`addbot <model> <isim> <skill>`) — **+** butonu |
+| `jk_botti kickbot` | rastgele bir botu at (`kickbot <isim>`: o botu) — **−** butonu |
 | `jk_botti kickall` | tüm botları at |
 | `jk_botti botskill 1..5` | varsayılan zorluk (1 en iyi, 5 en kötü) |
 | `jk_botti min_bots N` / `max_bots N` | oyuncu sayısına göre otomatik bot |
@@ -82,7 +93,10 @@ GitHub Actions: `.github/workflows/jk-botti.yml` bu klasör değiştiğinde çal
   devre dışı (yalnızca adanmış sunucudaki `bot_conntimes` özelliğini etkiler, listen
   serverda zaten kapalı).
 * x87 `fsincos` ve `int $3` yerine taşınabilir C yolu / `__builtin_trap()`.
-* Android'de gömülü varsayılan dosyaları `valve/addons/jk_botti/`'ye kurma.
+* Android'de gömülü varsayılan dosyaları `valve/addons/jk_botti/`'ye kurma; varsayılan
+  cfg'de `addbot` satırları kapalı.
+* Yeni `jk_botti kickbot [isim]` komutu (tek bot atar, `min_bots`'u gerekirse düşürür).
+* Android listen server'da `touch_addbutton` ile geçici **+ / −** dokunmatik butonları.
 * Derleme: `jk_botti-android/CMakeLists.txt` (x86 CPU varyantları / shim yerine tek kütüphane,
   Xash adlandırması `libjk_botti_mm_android_arm64.so`).
 

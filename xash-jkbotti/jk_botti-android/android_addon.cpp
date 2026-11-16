@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <android/log.h>
@@ -21,10 +22,30 @@ static void mkdir_p(const char *path)
 	mkdir(buf, 0775);
 }
 
+// true if the file at <path> has exactly <size> bytes equal to <data>
+static bool file_equals(const char *path, const unsigned char *data, size_t size)
+{
+	FILE *fp = fopen(path, "rb");
+	if (!fp)
+		return false;
+
+	bool same = true;
+	unsigned char buf[4096];
+	size_t off = 0, n;
+	while (same && (n = fread(buf, 1, sizeof(buf), fp)) > 0)
+	{
+		if (off + n > size || memcmp(buf, data + off, n) != 0)
+			same = false;
+		off += n;
+	}
+	fclose(fp);
+	return same && off == size;
+}
+
 void jk_android_install_addon_files(const char *moddir)
 {
 	char base[256], path[512];
-	int written = 0;
+	int written = 0, upgraded = 0;
 
 	snprintf(base, sizeof(base), "%s/addons/jk_botti", moddir);
 
@@ -32,8 +53,13 @@ void jk_android_install_addon_files(const char *moddir)
 	{
 		struct stat st;
 		snprintf(path, sizeof(path), "%s/%s", base, f->path);
+		bool upgrade = false;
 		if (stat(path, &st) == 0)
-			continue;
+		{
+			if (!f->legacy || !file_equals(path, f->legacy, f->legacy_size))
+				continue;
+			upgrade = true;
+		}
 
 		char dir[512];
 		snprintf(dir, sizeof(dir), "%s", path);
@@ -52,9 +78,24 @@ void jk_android_install_addon_files(const char *moddir)
 		}
 		fwrite(f->data, 1, f->size, fp);
 		fclose(fp);
-		written++;
+		if (upgrade)
+			upgraded++;
+		else
+			written++;
 	}
 
-	if (written)
-		__android_log_print(ANDROID_LOG_INFO, "jk_botti", "installed %d default files into %s", written, base);
+	if (written || upgraded)
+		__android_log_print(ANDROID_LOG_INFO, "jk_botti", "installed %d default files into %s, upgraded %d", written, base, upgraded);
+}
+
+void jk_android_add_touch_buttons(void (*server_command)(const char *))
+{
+	// Free spot of the default Xash3D layout: top row, between the touch
+	// editor button (x 0.42-0.50) and spray (x 0.68-0.76).
+	// flags 12 = TOUCH_FL_CLIENT (temporary, not saved) | TOUCH_FL_MP
+	// last argument 1 = keep the button square on any screen aspect ratio
+	server_command("touch_addbutton \"jk_bot_remove\" \"addons/jk_botti/touch/bot_remove\" "
+		"\"jk_botti kickbot\" 0.525 0.01 0.595 0.13 255 255 255 255 12 1\n");
+	server_command("touch_addbutton \"jk_bot_add\" \"addons/jk_botti/touch/bot_add\" "
+		"\"jk_botti addbot\" 0.600 0.01 0.670 0.13 255 255 255 255 12 1\n");
 }
