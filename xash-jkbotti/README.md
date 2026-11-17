@@ -52,7 +52,9 @@ ekler). Her haritada otomatik bot isterseniz `valve/addons/jk_botti/jk_botti.cfg
 `#addbot` satırlarının başındaki `#` işaretini kaldırın ya da `min_bots` / `max_bots` ayarlayın.
 
 **+ / − butonları** yalnızca telefonda kurulan sunucuda (listen server) ve çok oyunculu oyunda
-görünür. Geçicidirler, Xash'in dokunmatik düzen dosyasına kaydedilmezler. Dokunmatik düzenleyici
+görünür; oyuna girdikten ~1 saniye sonra belirir. Geçicidirler, Xash'in dokunmatik düzen
+dosyasına kaydedilmezler. (Xash `touch.cfg`'yi ilk oyun karesinde `touch_removeall` ile yüklediği
+için butonlar giriş sonrası ilk 40 saniyede birkaç kez yeniden eklenir.) Dokunmatik düzenleyici
 açıkken başka bir yere taşınabilirler; yeni haritada varsayılan yerlerine dönerler.
 
 Uygulama Xash'in mod listesinde de görünür (`su.xash.engine.MOD`); oradan seçilirse

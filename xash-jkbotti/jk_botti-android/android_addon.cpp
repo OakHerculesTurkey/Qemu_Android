@@ -88,7 +88,7 @@ void jk_android_install_addon_files(const char *moddir)
 		__android_log_print(ANDROID_LOG_INFO, "jk_botti", "installed %d default files into %s, upgraded %d", written, base, upgraded);
 }
 
-void jk_android_add_touch_buttons(void (*server_command)(const char *))
+static void add_touch_buttons(void (*server_command)(const char *))
 {
 	// Free spot of the default Xash3D layout: top row, between the touch
 	// editor button (x 0.42-0.50) and spray (x 0.68-0.76).
@@ -98,4 +98,41 @@ void jk_android_add_touch_buttons(void (*server_command)(const char *))
 		"\"jk_botti kickbot\" 0.525 0.01 0.595 0.13 255 255 255 255 12 1\n");
 	server_command("touch_addbutton \"jk_bot_add\" \"addons/jk_botti/touch/bot_add\" "
 		"\"jk_botti addbot\" 0.600 0.01 0.670 0.13 255 255 255 255 12 1\n");
+}
+
+// seconds after the local player entered the game at which the buttons are
+// (re)added; re-adding a button with the same name replaces it
+static const float touch_add_delays[] = { 1.0f, 2.5f, 5.0f, 10.0f, 20.0f, 40.0f };
+static int touch_step;
+static float touch_entered = -1.0f;
+
+void jk_android_touch_reset(void)
+{
+	touch_step = 0;
+	touch_entered = -1.0f;
+}
+
+void jk_android_touch_frame(float time, bool host_in_game, void (*server_command)(const char *))
+{
+	const int steps = sizeof(touch_add_delays) / sizeof(touch_add_delays[0]);
+
+	if (!host_in_game)
+	{
+		// left / reconnecting: start over when back in the game
+		if (touch_entered >= 0.0f)
+			jk_android_touch_reset();
+		return;
+	}
+
+	if (touch_entered < 0.0f || time < touch_entered) // time restarts on a new map
+	{
+		touch_step = 0;
+		touch_entered = time;
+	}
+
+	if (touch_step < steps && time - touch_entered >= touch_add_delays[touch_step])
+	{
+		add_touch_buttons(server_command);
+		touch_step++;
+	}
 }

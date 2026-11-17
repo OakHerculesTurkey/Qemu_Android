@@ -26,9 +26,15 @@ extern const jk_embedded_file_t jk_embedded_files[];
 // edits and recorded waypoints are kept.
 void jk_android_install_addon_files(const char *moddir);
 
-// Listen server only: adds "+" / "-" touch buttons that run
-// "jk_botti addbot" / "jk_botti kickbot". Temporary buttons (not saved into
-// the user's touch config), shown in multiplayer only.
-void jk_android_add_touch_buttons(void (*server_command)(const char *));
+// Listen server only: "+" / "-" touch buttons that run "jk_botti addbot" /
+// "jk_botti kickbot". Temporary buttons (not saved into the user's touch
+// config), shown in multiplayer only.
+//
+// Xash3D loads the user's touch.cfg (which starts with "touch_removeall")
+// lazily, on the first in-game frame it draws, i.e. after the server has
+// already started the map. So the buttons are (re)added a few times after
+// the local player has entered the game, instead of once at map start.
+void jk_android_touch_reset(void);  // call on every map start
+void jk_android_touch_frame(float time, bool host_in_game, void (*server_command)(const char *));
 
 #endif

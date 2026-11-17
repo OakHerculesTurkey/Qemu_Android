@@ -96,7 +96,7 @@ index a9b0691..f9d57dc 100644
     {
        UTIL_ConsolePrintf("%s: Unknown command \'%s\'\n", CMD_ARGV(0), CMD_ARGS());
 diff --git a/dll.cpp b/dll.cpp
-index 93405c8..f8ba51a 100644
+index 93405c8..f4eeafb 100644
 --- a/dll.cpp
 +++ b/dll.cpp
 @@ -4,6 +4,9 @@
@@ -109,20 +109,35 @@ index 93405c8..f8ba51a 100644
  #include <string.h>
  
  #include <malloc.h>
-@@ -703,6 +706,12 @@ static void StartFrameOpenConfigFile(void)
+@@ -258,6 +261,9 @@ static void SpawnInitWorld(void)
  
-    need_to_open_cfg = FALSE;  // only do this once!!!
+    num_bots = 0;
+    need_to_open_cfg = TRUE;
++#ifdef __ANDROID__
++   jk_android_touch_reset();
++#endif
+    FreeCfgBotRecord();//reset on mapchange
+ 
+    bot_check_time = gpGlobals->time + 5.0;
+@@ -861,6 +867,17 @@ static FORCE_STACK_ALIGN void StartFrame( void )
+    if (need_to_open_cfg)  // have we open jk_botti.cfg file yet?
+       StartFrameOpenConfigFile();
  
 +#ifdef __ANDROID__
-+   // listen server on the phone: on-screen "+" / "-" bot buttons
++   // listen server on the phone: on-screen "+" / "-" bot buttons, added once
++   // the local player (edict 1) is in the game
 +   if (!IS_DEDICATED_SERVER())
-+      jk_android_add_touch_buttons([](const char *cmd) { SERVER_COMMAND((char *)cmd); });
++   {
++      edict_t *host = INDEXENT(1);
++      bool in_game = !FNullEnt(host) && (host->v.flags & FL_CLIENT) && !(host->v.flags & FL_FAKECLIENT);
++      jk_android_touch_frame(gpGlobals->time, in_game, [](const char *cmd) { SERVER_COMMAND((char *)cmd); });
++   }
 +#endif
 +
-    // Clear custom team model mapping before re-reading config
-    UTIL_ClearTeamModelMapping();
- 
-@@ -1018,6 +1027,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
+    if ((bot_cfg_fp) &&
+        (bot_cfg_pause_time > 0.0f) && (bot_cfg_pause_time <= gpGlobals->time))
+    {
+@@ -1018,6 +1035,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
        return (FALSE); // returning FALSE prevents metamod from attaching this plugin
     }
  
