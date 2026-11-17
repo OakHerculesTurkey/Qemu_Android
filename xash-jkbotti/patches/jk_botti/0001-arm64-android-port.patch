@@ -53,10 +53,45 @@ index e5f1752..4ba542b 100644
 +}
 +#endif
 diff --git a/commands.cpp b/commands.cpp
-index a9b0691..f9d57dc 100644
+index a9b0691..1ecf223 100644
 --- a/commands.cpp
 +++ b/commands.cpp
-@@ -1318,6 +1318,53 @@ FORCE_STACK_ALIGN void jk_botti_ServerCommand (void)
+@@ -29,6 +29,8 @@ extern char g_arg2[1024];
+ extern char g_arg3[1024];
+ extern qboolean g_waypoint_on;
+ extern qboolean g_auto_waypoint;
++extern int g_autowaypoint_bots;
++qboolean BotsLearnCurrentMap(void);
+ extern qboolean g_path_waypoint;
+ extern qboolean g_path_waypoint_enable;
+ extern qboolean g_waypoint_updated;
+@@ -873,6 +875,25 @@ static qboolean ProcessCommand(const int cmdtype, const printfunc_t printfunc, v
+ 
+       return TRUE;
+    }
++   else if (FStrEq(pcmd, "autowaypoint_bots"))
++   {
++      if ((arg1 != NULL) && (*arg1 != 0))
++      {
++         int temp = atoi(arg1);
++         if (temp < 0 || temp > 2)
++            printfunc(PRINTFUNC_ERROR, arg, "invalid autowaypoint_bots value! (0 = off, 1 = maps without bundled waypoints, 2 = all maps)\n");
++         else
++            g_autowaypoint_bots = temp;
++      }
++
++      char msg[160];
++      safevoid_snprintf(msg, sizeof(msg), "autowaypoint_bots is %d (%s); bots %s this map\n", g_autowaypoint_bots,
++         g_autowaypoint_bots == 0 ? "off" : (g_autowaypoint_bots == 1 ? "maps without bundled waypoints" : "all maps"),
++         BotsLearnCurrentMap() ? "ARE learning" : "are NOT learning");
++      printfunc(PRINTFUNC_INFO, arg, msg);
++
++      return TRUE;
++   }
+    else if (FStrEq(pcmd, "autowaypoint"))
+    {
+       if ((arg1 != NULL) && (*arg1 != 0))
+@@ -1318,6 +1339,53 @@ FORCE_STACK_ALIGN void jk_botti_ServerCommand (void)
           UTIL_ConsolePrintf("Disabled min_bots/max_bots.");
        }
     }
@@ -111,7 +146,7 @@ index a9b0691..f9d57dc 100644
     {
        UTIL_ConsolePrintf("%s: Unknown command \'%s\'\n", CMD_ARGV(0), CMD_ARGS());
 diff --git a/dll.cpp b/dll.cpp
-index 93405c8..f4eeafb 100644
+index 93405c8..332cbfa 100644
 --- a/dll.cpp
 +++ b/dll.cpp
 @@ -4,6 +4,9 @@
@@ -124,7 +159,42 @@ index 93405c8..f4eeafb 100644
  #include <string.h>
  
  #include <malloc.h>
-@@ -258,6 +261,9 @@ static void SpawnInitWorld(void)
+@@ -36,6 +39,21 @@ extern char g_arg2[1024];
+ extern char g_arg3[1024];
+ extern qboolean g_waypoint_on;
+ extern qboolean g_auto_waypoint;
++
++// autowaypoint_bots: 0 = only human players create waypoints (upstream),
++// 1 = bots too, on maps that have no bundled (hand made) waypoint file,
++// 2 = bots too, on every map
++int g_autowaypoint_bots = 1;
++static qboolean g_bots_learn_map = FALSE;
++
++qboolean BotsLearnCurrentMap(void)
++{
++   if (g_autowaypoint_bots >= 2)
++      return TRUE;
++   if (g_autowaypoint_bots <= 0)
++      return FALSE;
++   return g_bots_learn_map;
++}
+ extern qboolean g_path_waypoint;
+ extern qboolean g_path_waypoint_enable;
+ extern qboolean g_waypoint_updated;
+@@ -221,6 +239,12 @@ static void SpawnInitWorld(void)
+    WaypointInit();
+    WaypointLoad(NULL);
+ 
++#ifdef __ANDROID__
++   g_bots_learn_map = !jk_android_has_bundled_waypoints(STRING(gpGlobals->mapname));
++#else
++   g_bots_learn_map = TRUE;
++#endif
++
+    // init sound system
+    *pSoundEnt = CSoundEnt();
+    pSoundEnt->Spawn();
+@@ -258,6 +282,9 @@ static void SpawnInitWorld(void)
  
     num_bots = 0;
     need_to_open_cfg = TRUE;
@@ -134,7 +204,34 @@ index 93405c8..f4eeafb 100644
     FreeCfgBotRecord();//reset on mapchange
  
     bot_check_time = gpGlobals->time + 5.0;
-@@ -861,6 +867,17 @@ static FORCE_STACK_ALIGN void StartFrame( void )
+@@ -693,6 +720,26 @@ static void StartFrameProcessAutowaypointing(void)
+          }
+       }
+    }
++
++   // bots learning the map: up to 2 bots per pass, round-robin so that every
++   // bot is sampled often enough (the human loop above always restarts at 1)
++   if (g_auto_waypoint && BotsLearnCurrentMap())
++   {
++      static int next_bot = 0;
++      int done = 0;
++
++      for (int n = 0; n < 32 && done < 2; n++)
++      {
++         int i = next_bot;
++         next_bot = (next_bot + 1) % 32;
++
++         if (!bots[i].is_used || FNullEnt(bots[i].pEdict) || !IsAlive(bots[i].pEdict))
++            continue;
++
++         WaypointBotAutowaypoint(bots[i].pEdict);
++         done++;
++      }
++   }
+ }
+ 
+ 
+@@ -861,6 +908,17 @@ static FORCE_STACK_ALIGN void StartFrame( void )
     if (need_to_open_cfg)  // have we open jk_botti.cfg file yet?
        StartFrameOpenConfigFile();
  
@@ -152,7 +249,7 @@ index 93405c8..f4eeafb 100644
     if ((bot_cfg_fp) &&
         (bot_cfg_pause_time > 0.0f) && (bot_cfg_pause_time <= gpGlobals->time))
     {
-@@ -1018,6 +1035,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
+@@ -1018,6 +1076,12 @@ C_DLLEXPORT FORCE_STACK_ALIGN int Meta_Attach (PLUG_LOADTIME now, META_FUNCTIONS
        return (FALSE); // returning FALSE prevents metamod from attaching this plugin
     }
  
@@ -200,3 +297,38 @@ index 82c73c2..c56d73b 100644
  }
  
  char* UTIL_VarArgs2( char * string, size_t strlen, char *format, ... )
+diff --git a/waypoint.cpp b/waypoint.cpp
+index 5bbbcda..df60ee4 100644
+--- a/waypoint.cpp
++++ b/waypoint.cpp
+@@ -2434,6 +2434,18 @@ static void WaypointAutowaypointing(int idx, edict_t *pEntity)
+ }
+ 
+ 
++// Bots learning unwaypointed maps (autowaypoint_bots): same data collection
++// as for human players, without the waypoint display part of WaypointThink.
++void WaypointBotAutowaypoint(edict_t *pEntity)
++{
++   int idx = ENTINDEX(pEntity) - 1;
++   if(idx < 0 || idx >= gpGlobals->maxClients)
++      return;
++
++   if(g_auto_waypoint)
++      WaypointAutowaypointing(idx, pEntity);
++}
++
+ void WaypointThink(edict_t *pEntity)
+ {
+    float distance, min_distance;
+diff --git a/waypoint.h b/waypoint.h
+index 260a161..2791d86 100644
+--- a/waypoint.h
++++ b/waypoint.h
+@@ -97,6 +97,7 @@ qboolean WaypointLoad(edict_t *pEntity);
+ void WaypointSave(void);
+ int  WaypointFindReachable(edict_t *pEntity, float range);
+ void WaypointThink(edict_t *pEntity);
++void WaypointBotAutowaypoint(edict_t *pEntity);
+ void WaypointFloyds(short *shortest_path, short *from_to);
+ void CollectMapSpawnItems(edict_t *pSpawn);
+ void WaypointAddSpawnObjects(void);

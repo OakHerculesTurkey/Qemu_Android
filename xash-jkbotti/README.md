@@ -70,9 +70,15 @@ aynı parametrelerle başlar.
 | `jk_botti botskill 1..5` | varsayılan zorluk (1 en iyi, 5 en kötü) |
 | `jk_botti min_bots N` / `max_bots N` | oyuncu sayısına göre otomatik bot |
 | `jk_botti autowaypoint 1` | haritada gezerken waypoint öğrenme |
+| `jk_botti autowaypoint_bots 0/1/2` | botların da waypoint öğretmesi: 0 kapalı, 1 hazır waypoint'i olmayan haritalarda (varsayılan), 2 her haritada |
 | `meta list` | Metamod'un yüklediği eklentiler |
 
-Waypoint'i olmayan haritalarda `autowaypoint` sayesinde botlar oynadıkça yolu öğrenir.
+Waypoint'i olmayan haritalarda `autowaypoint` ile yollar öğrenilir. Asıl jk_botti yalnızca gerçek
+oyuncuların hareketinden öğrenir; bu Android sürümünde `autowaypoint_bots 1` (varsayılan) ile
+**botların hareketi de** kaydedilir — ama yalnızca eklentiyle hazır waypoint'i gelmeyen
+haritalarda, böylece el yapımı 26 harita bozulmaz. Yeni waypoint'ler harita sonunda
+`valve/addons/jk_botti/waypoints/<harita>.wpt` dosyasına yazılır ve haritanın **bir sonraki
+açılışında** kullanılır; yani botları ekleyip bir süre oynatın, sonra haritayı yeniden açın.
 
 ## Derleme
 
@@ -99,6 +105,9 @@ GitHub Actions: `.github/workflows/jk-botti.yml` bu klasör değiştiğinde çal
   cfg'de `addbot` satırları kapalı.
 * Yeni `jk_botti kickbot [isim]` komutu (tek bot atar, `min_bots`'u gerekirse düşürür).
 * Android listen server'da `touch_addbutton` ile geçici **+ / −** dokunmatik butonları.
+* Bot atma `kick #<userid>` biçiminde (Xash `kick # <id>`'yi kabul etmiyor).
+* `autowaypoint_bots`: botların hareketinden de waypoint öğrenme; insan oyuncu döngüsü hep
+  1. oyuncudan başladığı için botlar ayrıca sırayla (kare başına 2 bot) taranır.
 * Derleme: `jk_botti-android/CMakeLists.txt` (x86 CPU varyantları / shim yerine tek kütüphane,
   Xash adlandırması `libjk_botti_mm_android_arm64.so`).
 

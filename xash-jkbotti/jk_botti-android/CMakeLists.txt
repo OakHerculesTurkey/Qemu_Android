@@ -57,10 +57,25 @@ string(PREPEND ANDROID_CFG
 "# Android (Xash3D FWGS): bots are NOT added automatically.
 # Use the on-screen + / - buttons, or the console:
 #   jk_botti addbot   /   jk_botti kickbot   /   jk_botti kickall
+# Bots learn waypoints on maps without bundled ones (autowaypoint_bots).
 # Uncomment the addbot lines below (or set min_bots/max_bots) to have bots
 # join every map by themselves.
 #
 ")
+string(REPLACE "\n# automatic waypoint creation\nautowaypoint 1\n" "
+# automatic waypoint creation
+autowaypoint 1
+
+# autowaypoint_bots <0|1|2> - bots also create waypoints while they move
+#      (Android build). 0 = only human players (original jk_botti),
+#      1 = bots learn maps that have no bundled waypoint file (default),
+#      2 = bots learn every map (may alter the bundled hand made waypoints).
+#      New waypoints are saved at map end and used from the next load.
+autowaypoint_bots 1
+" ANDROID_CFG "${ANDROID_CFG}")
+if(NOT ANDROID_CFG MATCHES "autowaypoint_bots 1")
+	message(FATAL_ERROR "jk_botti.cfg layout changed: autowaypoint block not found")
+endif()
 set(ANDROID_CFG_FILE "${CMAKE_CURRENT_BINARY_DIR}/jk_botti.android.cfg")
 file(WRITE "${ANDROID_CFG_FILE}" "${ANDROID_CFG}")
 

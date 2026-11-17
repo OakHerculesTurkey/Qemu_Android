@@ -26,6 +26,10 @@ extern const jk_embedded_file_t jk_embedded_files[];
 // edits and recorded waypoints are kept.
 void jk_android_install_addon_files(const char *moddir);
 
+// True if waypoints/<mapname>.wpt ships with the plugin (hand made waypoints
+// that bots should not modify, see "autowaypoint_bots").
+bool jk_android_has_bundled_waypoints(const char *mapname);
+
 // Listen server only: "+" / "-" touch buttons that run "jk_botti addbot" /
 // "jk_botti kickbot". Temporary buttons (not saved into the user's touch
 // config), shown in multiplayer only.

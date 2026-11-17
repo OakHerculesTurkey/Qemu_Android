@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <android/log.h>
 
@@ -135,4 +136,19 @@ void jk_android_touch_frame(float time, bool host_in_game, void (*server_command
 		add_touch_buttons(server_command);
 		touch_step++;
 	}
+}
+
+bool jk_android_has_bundled_waypoints(const char *mapname)
+{
+	char want[128];
+	if (!mapname || !*mapname)
+		return false;
+	snprintf(want, sizeof(want), "waypoints/%s.wpt", mapname);
+
+	for (const jk_embedded_file_t *f = jk_embedded_files; f->path; f++)
+	{
+		if (strcasecmp(f->path, want) == 0)
+			return true;
+	}
+	return false;
 }
