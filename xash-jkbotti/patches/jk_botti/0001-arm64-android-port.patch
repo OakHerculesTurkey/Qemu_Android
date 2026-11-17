@@ -1,3 +1,18 @@
+diff --git a/bot.cpp b/bot.cpp
+index 269421f..a4c68d2 100644
+--- a/bot.cpp
++++ b/bot.cpp
+@@ -89,7 +89,9 @@ void BotKick(bot_t &pBot)
+    JKASSERT(FNullEnt(pBot.pEdict));
+    JKASSERT(pBot.userid <= 0);
+ 
+-   safevoid_snprintf(cmd, sizeof(cmd), "kick # %d\n", pBot.userid);
++   // "#<userid>" without a space: Xash3D FWGS takes the first argument as
++   // a whole ("#" alone is looked up as a player name and fails)
++   safevoid_snprintf(cmd, sizeof(cmd), "kick #%d\n", pBot.userid);
+ 
+    SERVER_COMMAND(cmd);  // kick the bot using 'kick # <userid>'
+    SERVER_EXECUTE();
 diff --git a/bot_query_hook_linux.cpp b/bot_query_hook_linux.cpp
 index e5f1752..4ba542b 100644
 --- a/bot_query_hook_linux.cpp
